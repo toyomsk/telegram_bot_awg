@@ -351,23 +351,42 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         logger.info(f"Добавляем новый пир: {public_key[:8]}...")
         
         # Формируем команду wg set для добавления пира
-        cmd = ['wg', 'set', WG_INTERFACE, 'peer', public_key]
-        
-        # Добавляем PresharedKey если есть
+        # Используем bash -c для правильной передачи ключей через echo
         psk_match = re.search(r'PresharedKey\s*=\s*([A-Za-z0-9+/=]{44})', last_peer_section)
-        if psk_match:
-            cmd.extend(['preshared-key', psk_match.group(1)])
-        
-        # Добавляем AllowedIPs
         allowed_ips_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', last_peer_section)
-        if allowed_ips_match:
-            cmd.extend(['allowed-ips', allowed_ips_match.group(1)])
-        else:
+        
+        if not allowed_ips_match:
             return False, "Не найден AllowedIPs для последнего пира"
         
-        # Выполняем команду внутри контейнера
-        logger.info(f"Выполняем команду: {' '.join(cmd[:4])}... (скрыт ключ)")
-        result = _run_wg_in_container(cmd, container_name)
+        allowed_ips = allowed_ips_match.group(1)
+        
+        # Формируем команду через bash для правильной передачи ключей
+        if psk_match:
+            psk = psk_match.group(1)
+            # Используем echo для передачи ключей через pipe
+            wg_cmd = f"echo '{psk}' | wg set {WG_INTERFACE} peer {public_key} preshared-key - allowed-ips {allowed_ips}"
+        else:
+            wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} allowed-ips {allowed_ips}"
+        
+        logger.info(f"Выполняем команду wg set для пира {public_key[:8]}...")
+        
+        if container_name:
+            # Выполняем через docker exec с bash
+            cmd = ['docker', 'exec', container_name, 'bash', '-c', wg_cmd]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+        else:
+            # Выполняем на хосте
+            result = subprocess.run(
+                ['bash', '-c', wg_cmd],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
         
         if result.returncode == 0:
             logger.info(f"✅ Добавлен пир {public_key[:8]}...")
@@ -381,13 +400,6 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
             else:
                 logger.warning(f"Ошибка добавления пира: {error_msg}")
                 return False, f"Ошибка добавления пира: {error_msg}"
-            
-    except FileNotFoundError:
-        logger.error("Команда wg не найдена")
-        return False, "wg команда недоступна"
-    except Exception as e:
-        logger.error(f"Ошибка применения конфигурации: {e}")
-        return False, f"Ошибка: {e}"
             
     except FileNotFoundError:
         logger.error("Команда wg не найдена")
