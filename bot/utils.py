@@ -257,82 +257,98 @@ def get_server_status(docker_compose_dir: str, vpn_config_dir: str) -> str:
         return f"❌ Ошибка при получении статуса: {e}"
 
 def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
-    """Применить конфигурацию WireGuard без перезапуска (wg syncconf)."""
-    import tempfile
-    
+    """Применить конфигурацию WireGuard без перезапуска (добавление новых пиров через wg set)."""
     try:
         config_path = os.path.join(vpn_config_dir, "wg0.conf")
         if not os.path.exists(config_path):
             return False, "Конфиг не найден"
         
-        # Читаем оригинальный конфиг
+        # Получаем список текущих пиров
+        try:
+            result = subprocess.run(
+                ['wg', 'show', WG_INTERFACE, 'peers'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            existing_peers = set()
+            if result.returncode == 0 and result.stdout.strip():
+                existing_peers = set(result.stdout.strip().split('\n'))
+        except Exception as e:
+            logger.warning(f"Не удалось получить список текущих пиров: {e}")
+            existing_peers = set()
+        
+        # Читаем конфиг и находим новые пиры
         with open(config_path, 'r') as f:
             config_content = f.read()
         
-        # Удаляем параметры AmneziaVPN и Address с /32 из секции [Interface]
-        # Эти параметры не поддерживаются стандартным wg syncconf
-        lines = config_content.split('\n')
-        cleaned_lines = []
-        in_interface = False
+        # Парсим пиры из конфига
+        peer_pattern = r'\[Peer\]\s*\n(PublicKey\s*=\s*[^\s]+)\s*\n(?:PresharedKey\s*=\s*[^\s]+\s*\n)?(AllowedIPs\s*=\s*[^\s]+)'
+        peers = re.findall(peer_pattern, config_content, re.MULTILINE)
         
-        for line in lines:
-            stripped = line.strip()
-            # Определяем начало секции [Interface]
-            if stripped == '[Interface]':
-                in_interface = True
-                cleaned_lines.append(line)
+        new_peers_added = 0
+        errors = []
+        
+        for peer_match in peers:
+            # Извлекаем данные пира
+            public_key_line = peer_match[0] if isinstance(peer_match, tuple) else peer_match
+            public_key = public_key_line.split('=')[1].strip() if '=' in public_key_line else None
+            
+            if not public_key:
                 continue
             
-            # Определяем конец секции [Interface] (начало [Peer])
-            if stripped.startswith('[') and stripped != '[Interface]':
-                in_interface = False
+            # Проверяем, есть ли уже такой пир
+            if public_key in existing_peers:
+                continue
             
-            # В секции [Interface] пропускаем параметры AmneziaVPN, Address и команды
-            # wg syncconf не понимает эти параметры в [Interface]
-            if in_interface:
-                param_name = stripped.split('=')[0].strip() if '=' in stripped else ''
-                # Пропускаем параметры AmneziaVPN
-                if param_name in ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']:
-                    continue
-                # Пропускаем Address полностью (wg syncconf не понимает Address в [Interface])
-                if param_name == 'Address':
-                    continue
-                # Пропускаем команды PreUp, PostUp, PreDown, PostDown (wg syncconf не понимает их)
-                if param_name in ['PreUp', 'PostUp', 'PreDown', 'PostDown']:
-                    continue
+            # Извлекаем остальные параметры пира
+            peer_section_match = re.search(
+                rf'\[Peer\]\s*\nPublicKey\s*=\s*{re.escape(public_key)}\s*\n(.*?)(?=\n\[Peer\]|\n\[Interface\]|\Z)',
+                config_content,
+                re.DOTALL
+            )
             
-            cleaned_lines.append(line)
-        
-        # Создаем временный конфиг без параметров AmneziaVPN
-        temp_config = '\n'.join(cleaned_lines)
-        
-        # Создаем временный файл
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as temp_file:
-            temp_file.write(temp_config)
-            temp_config_path = temp_file.name
-        
-        try:
-            # Используем wg syncconf с очищенным конфигом
+            if not peer_section_match:
+                continue
+            
+            peer_params = peer_section_match.group(1)
+            
+            # Формируем команду wg set для добавления пира
+            cmd = ['wg', 'set', WG_INTERFACE, 'peer', public_key]
+            
+            # Добавляем PresharedKey если есть
+            psk_match = re.search(r'PresharedKey\s*=\s*([^\s]+)', peer_params)
+            if psk_match:
+                cmd.extend(['preshared-key', psk_match.group(1)])
+            
+            # Добавляем AllowedIPs
+            allowed_ips_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', peer_params)
+            if allowed_ips_match:
+                cmd.extend(['allowed-ips', allowed_ips_match.group(1)])
+            
+            # Выполняем команду
             result = subprocess.run(
-                ['wg', 'syncconf', WG_INTERFACE, temp_config_path],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=10
             )
             
             if result.returncode == 0:
-                logger.info(f"Конфигурация WireGuard применена через syncconf")
-                return True, "✅ Конфигурация применена"
+                new_peers_added += 1
+                logger.info(f"Добавлен пир {public_key[:8]}...")
             else:
                 error_msg = result.stderr if result.stderr else result.stdout
-                logger.warning(f"Ошибка syncconf: {error_msg}")
-                return False, f"Ошибка syncconf: {error_msg}"
-        finally:
-            # Удаляем временный файл
-            try:
-                os.unlink(temp_config_path)
-            except Exception:
-                pass
+                errors.append(f"Ошибка добавления пира {public_key[:8]}...: {error_msg}")
+                logger.warning(f"Ошибка добавления пира: {error_msg}")
+        
+        if new_peers_added > 0:
+            logger.info(f"Добавлено новых пиров: {new_peers_added}")
+            return True, f"✅ Конфигурация применена (добавлено пиров: {new_peers_added})"
+        elif errors:
+            return False, f"Ошибки при добавлении пиров: {'; '.join(errors)}"
+        else:
+            return True, "✅ Конфигурация актуальна (новых пиров нет)"
             
     except FileNotFoundError:
         logger.error("Команда wg не найдена")
