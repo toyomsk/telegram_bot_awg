@@ -150,10 +150,6 @@ AMNEZIA_H4 = _AMNEZIA_PARAMS['H4']
 # Имя интерфейса WireGuard (обычно wg0)
 WG_INTERFACE = os.getenv("WG_INTERFACE", "wg0")
 
-# Метод применения изменений: "syncconf" (рекомендуется) или "restart" (docker restart)
-# syncconf применяет изменения без перезапуска, не прерывая соединения
-WG_RELOAD_METHOD = os.getenv("WG_RELOAD_METHOD", "syncconf")
-
 def is_admin(user_id: int) -> bool:
     """Проверка, является ли пользователь администратором."""
     return user_id in ADMIN_IDS

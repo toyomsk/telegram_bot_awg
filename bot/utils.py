@@ -6,7 +6,7 @@ import qrcode
 import io
 import logging
 from typing import Optional, Tuple, Dict
-from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, WG_RELOAD_METHOD, DOCKER_COMPOSE_DIR
+from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, DOCKER_COMPOSE_DIR
 
 logger = logging.getLogger(__name__)
 
