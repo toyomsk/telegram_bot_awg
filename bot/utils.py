@@ -5,15 +5,17 @@ import subprocess
 import qrcode
 import io
 import logging
-import json
-import base64
-import zlib
-import collections
-import configparser
 from typing import Optional, Tuple, Dict
 from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, WG_RELOAD_METHOD, DOCKER_COMPOSE_DIR
 
 logger = logging.getLogger(__name__)
+
+def escape_markdown_v2(text: str) -> str:
+    """Экранирование специальных символов для Markdown V2."""
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
 
 def get_external_ip() -> str:
     """Получить внешний IP сервера."""
@@ -187,129 +189,6 @@ def generate_keys() -> Tuple[Optional[str], Optional[str], Optional[str]]:
         logger.error(f"Ошибка генерации ключей: {e}")
         return None, None, None
 
-def decode_amnezia_config(vpn_string: str) -> dict:
-    """Декодирование строки vpn:// обратно в JSON для проверки."""
-    try:
-        encoded_data = vpn_string.replace("vpn://", "")
-        # Добавляем padding если нужно
-        padding = 4 - (len(encoded_data) % 4)
-        if padding != 4:
-            encoded_data += "=" * padding
-        
-        compressed_data = base64.urlsafe_b64decode(encoded_data)
-        
-        # Читаем длину из первых 4 байт
-        original_data_len = int.from_bytes(compressed_data[:4], byteorder='big')
-        
-        # Декомпрессируем начиная с 5-го байта
-        decompressed_data = zlib.decompress(compressed_data[4:])
-        
-        if len(decompressed_data) != original_data_len:
-            raise ValueError(f"Неверная длина декомпрессированных данных: ожидалось {original_data_len}, получено {len(decompressed_data)}")
-        
-        return json.loads(decompressed_data.decode('utf-8'), object_pairs_hook=collections.OrderedDict)
-    except Exception as e:
-        logger.error(f"Ошибка декодирования конфигурации AmneziaVPN: {e}")
-        raise
-
-def encode_amnezia_config(config_json: dict) -> str:
-    """Кодирование JSON конфигурации AmneziaVPN в формат vpn://."""
-    try:
-        # Преобразуем JSON в строку с отступами (используем indent=4 как в оригинале)
-        json_str = json.dumps(config_json, indent=4).encode('utf-8')
-        
-        logger.debug(f"JSON строка длиной {len(json_str)} байт")
-        
-        # Сжимаем данные через zlib
-        compressed_data = zlib.compress(json_str)
-        logger.debug(f"Сжатые данные длиной {len(compressed_data)} байт")
-        
-        # Добавляем 4-байтовый заголовок с длиной оригинальных данных (big-endian)
-        original_data_len = len(json_str)
-        header = original_data_len.to_bytes(4, byteorder='big')
-        
-        # Объединяем заголовок и сжатые данные, кодируем в Base64 URL-safe
-        combined = header + compressed_data
-        encoded_data = base64.urlsafe_b64encode(combined).decode('utf-8').rstrip("=")
-        
-        result = f"vpn://{encoded_data}"
-        logger.debug(f"Закодированная строка vpn:// длиной {len(result)} символов")
-        
-        # Проверяем, что можем декодировать обратно
-        try:
-            decoded = decode_amnezia_config(result)
-            logger.debug(f"Проверка декодирования успешна, структура корректна")
-        except Exception as decode_error:
-            logger.warning(f"Не удалось декодировать созданную строку обратно: {decode_error}")
-        
-        return result
-    except Exception as e:
-        logger.error(f"Ошибка кодирования конфигурации AmneziaVPN: {e}")
-        raise
-
-def wireguard_config_to_amnezia_json(wg_config_text: str, client_name: str = "VPN", dns1: str = "1.1.1.1", dns2: str = "8.8.8.8") -> dict:
-    """Преобразование WireGuard конфига в JSON формат AmneziaVPN."""
-    try:
-        # Убираем параметры AmneziaVPN (Jc, Jmin и т.д.) из конфига для last_config
-        # Эти параметры специфичны для сервера и могут не нужны в клиентском конфиге
-        clean_config = wg_config_text
-        amnezia_params = ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']
-        for param in amnezia_params:
-            clean_config = re.sub(rf'^{param}\s*=\s*\d+\s*$', '', clean_config, flags=re.MULTILINE | re.IGNORECASE)
-        # Убираем пустые строки
-        clean_config = '\n'.join([line for line in clean_config.split('\n') if line.strip()])
-        
-        logger.debug(f"Очищенный конфиг (без параметров AmneziaVPN) длиной {len(clean_config)} символов")
-        
-        # Извлекаем параметры из конфига через regex
-        # Получаем MTU из секции Interface
-        mtu_match = re.search(r'\[Interface\].*?MTU\s*=\s*(\d+)', clean_config, re.DOTALL | re.IGNORECASE)
-        mtu = int(mtu_match.group(1)) if mtu_match else 1420
-        
-        # Получаем порт из Endpoint в секции Peer
-        endpoint_match = re.search(r'\[Peer\].*?Endpoint\s*=\s*([^:\s]+):(\d+)', clean_config, re.DOTALL | re.IGNORECASE)
-        port = int(endpoint_match.group(2)) if endpoint_match else 51820
-        
-        logger.debug(f"Извлечены параметры: MTU={mtu}, Port={port}")
-        
-        # Создаем структуру last_config (должна быть JSON строка)
-        # Используем очищенный конфиг без параметров AmneziaVPN
-        last_config_dict = {
-            "config": clean_config,
-            "mtu": mtu,
-            "port": port
-        }
-        
-        # Преобразуем в JSON строку без лишних пробелов
-        last_config_json_str = json.dumps(last_config_dict, separators=(',', ':'))
-        logger.debug(f"last_config JSON: {last_config_json_str[:300]}...")
-        
-        # Создаем JSON структуру для AmneziaVPN
-        # Структура должна соответствовать формату AmneziaVPN
-        # Используем OrderedDict для сохранения порядка полей (важно для совместимости)
-        config_json = collections.OrderedDict([
-            ("config_version", 1.0),
-            ("name", client_name),
-            ("description", f"WireGuard VPN configuration for {client_name}"),
-            ("dns1", dns1),
-            ("dns2", dns2),
-            ("containers", [
-                collections.OrderedDict([
-                    ("container", "amneziaWg"),
-                    ("protocol", "amneziaWg"),
-                    ("awg", collections.OrderedDict([
-                        ("last_config", last_config_json_str)
-                    ]))
-                ])
-            ])
-        ])
-        
-        logger.debug(f"Создан JSON конфиг с {len(config_json['containers'])} контейнером")
-        return config_json
-    except Exception as e:
-        logger.error(f"Ошибка преобразования конфига WireGuard в JSON: {e}", exc_info=True)
-        raise
-
 def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
     """Генерация QR-кода для конфига."""
     try:
@@ -326,42 +205,6 @@ def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
         return bio
     except Exception as e:
         logger.error(f"Ошибка генерации QR-кода: {e}")
-        return None
-
-def generate_amnezia_qr_code(wg_config_text: str, client_name: str = "VPN", dns1: str = "1.1.1.1", dns2: str = "8.8.8.8") -> Optional[io.BytesIO]:
-    """Генерация QR-кода в формате AmneziaVPN (vpn://...)."""
-    try:
-        logger.info(f"Генерация QR-кода AmneziaVPN для клиента {client_name}")
-        logger.debug(f"Конфиг длиной {len(wg_config_text)} символов")
-        
-        # Преобразуем WireGuard конфиг в JSON формат AmneziaVPN
-        config_json = wireguard_config_to_amnezia_json(wg_config_text, client_name, dns1, dns2)
-        
-        # Проверяем структуру JSON перед кодированием
-        json_str_check = json.dumps(config_json, indent=2)
-        logger.debug(f"JSON структура:\n{json_str_check[:500]}...")
-        
-        # Кодируем в формат vpn://
-        vpn_string = encode_amnezia_config(config_json)
-        
-        logger.info(f"Сгенерирована строка vpn:// длиной {len(vpn_string)} символов")
-        logger.debug(f"Первые 100 символов: {vpn_string[:100]}...")
-        
-        # Генерируем QR-код
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data(vpn_string)
-        qr.make(fit=True)
-        
-        img = qr.make_image(fill_color="black", back_color="white")
-        
-        # Сохранить в BytesIO
-        bio = io.BytesIO()
-        img.save(bio, 'PNG')
-        bio.seek(0)
-        logger.info(f"QR-код успешно сгенерирован")
-        return bio
-    except Exception as e:
-        logger.error(f"Ошибка генерации QR-кода AmneziaVPN: {e}", exc_info=True)
         return None
 
 def get_server_status(docker_compose_dir: str, vpn_config_dir: str) -> str:

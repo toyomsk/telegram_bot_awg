@@ -20,8 +20,7 @@ from config.settings import (
     AMNEZIA_H1,
     AMNEZIA_H2,
     AMNEZIA_H3,
-    AMNEZIA_H4,
-    DNS_SERVERS
+    AMNEZIA_H4
 )
 from bot.vpn_manager import (
     create_client,
@@ -31,19 +30,12 @@ from bot.vpn_manager import (
 )
 from bot.utils import (
     generate_qr_code,
-    generate_amnezia_qr_code,
     get_server_status,
-    restart_vpn
+    restart_vpn,
+    escape_markdown_v2
 )
 
 logger = logging.getLogger(__name__)
-
-def escape_markdown_v2(text: str) -> str:
-    """Экранирование специальных символов для Markdown V2."""
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
 
 def generate_keenetic_command() -> str:
     """Генерация команды для роутеров Keenetic."""
@@ -161,24 +153,8 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         config_file = io.BytesIO(config_content.encode('utf-8'))
         config_file.name = f"{client_name}.conf"
         
-        # Для QR-кода AmneziaVPN используем базовый конфиг без параметров AmneziaVPN
-        # Читаем напрямую из файла, чтобы получить чистый конфиг
-        config_path = os.path.join(VPN_CONFIG_DIR, f"{client_name}.conf")
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                basic_config = f.read()
-        else:
-            basic_config = config_content
-            # Убираем параметры AmneziaVPN из конфига
-            amnezia_params = ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']
-            for param in amnezia_params:
-                basic_config = re.sub(rf'^{param}\s*=\s*\d+\s*$', '', basic_config, flags=re.MULTILINE | re.IGNORECASE)
-            basic_config = '\n'.join([line for line in basic_config.split('\n') if line.strip()])
-        
-        # Генерация QR-кода в формате AmneziaVPN
-        dns1 = DNS_SERVERS[0] if len(DNS_SERVERS) > 0 else "1.1.1.1"
-        dns2 = DNS_SERVERS[1] if len(DNS_SERVERS) > 1 else "8.8.8.8"
-        qr_image = generate_amnezia_qr_code(basic_config, client_name, dns1, dns2)
+        # Генерация QR-кода (обычный текстовый конфиг WireGuard)
+        qr_image = generate_qr_code(config_content)
         
         # Генерация команды для Keenetic
         keenetic_cmd = generate_keenetic_command()

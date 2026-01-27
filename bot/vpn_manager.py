@@ -7,7 +7,8 @@ from bot.utils import (
     get_external_ip,
     get_server_public_key,
     get_next_client_ip,
-    generate_keys
+    generate_keys,
+    escape_markdown_v2
 )
 from config.settings import (
     VPN_BASE_IP,
@@ -214,10 +215,12 @@ def list_clients(vpn_config_dir: str, docker_compose_dir: str = None) -> str:
                         logger.error(f"Ошибка чтения файла {file}: {e}")
                         continue
         
-        result = "👥 **Список клиентов:**\n\n"
+        result = "👥 \\*\\*Список клиентов:\\*\\*\n\n"
         for i, (pub_key, ip) in enumerate(peers, 1):
             client_name = ip_to_name.get(ip, f"client_{ip}")
-            result += f"`{i}.` **{client_name}** - `{VPN_BASE_IP}.{ip}`\n"
+            escaped_name = escape_markdown_v2(client_name)
+            escaped_ip = escape_markdown_v2(f"{VPN_BASE_IP}.{ip}")
+            result += f"\\`{i}\\.\\` \\*\\*{escaped_name}\\*\\* \\- \\`{escaped_ip}\\`\n"
         
         return result
     
