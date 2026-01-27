@@ -265,7 +265,7 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         
         # Используем wg syncconf для применения изменений без перезапуска
         result = subprocess.run(
-            ['wg', 'syncconf', WG_INTERFACE, config_path],
+            ['awg', 'syncconf', WG_INTERFACE, config_path],
             capture_output=True,
             text=True,
             timeout=10
