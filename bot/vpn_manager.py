@@ -151,12 +151,17 @@ def delete_client(
                 server_config = f.read()
             
             # Удаляем секцию [Peer] с этим публичным ключом
-            # Паттерн для поиска секции [Peer] с нужным ключом
-            # Экранируем точку в базовом IP для regex
-            base_ip_escaped = VPN_BASE_IP.replace('.', r'\.')
-            pattern = rf'\[Peer\]\s*\nPublicKey\s*=\s*{re.escape(client_public_key)}\s*\n(?:PresharedKey\s*=\s*[^\s]+\s*\n)?AllowedIPs\s*=\s*{base_ip_escaped}\.\d+/32\s*\n'
+            # Используем более надежный подход: находим секцию [Peer] с нужным ключом и удаляем до следующей секции или конца файла
+            escaped_key = re.escape(client_public_key)
             
-            new_config = re.sub(pattern, '', server_config)
+            # Паттерн ищет секцию [Peer] с нужным публичным ключом и удаляет её полностью
+            # до следующей секции [Peer] или [Interface] или конца файла
+            pattern = rf'\[Peer\][^\[]*?PublicKey\s*=\s*{escaped_key}[^\[]*?(?=\n\[(?:Peer|Interface)\]|\Z)'
+            
+            new_config = re.sub(pattern, '', server_config, flags=re.DOTALL | re.MULTILINE)
+            
+            # Удаляем лишние пустые строки (более 2 подряд)
+            new_config = re.sub(r'\n{3,}', '\n\n', new_config)
             
             # Сохраняем обновленный конфиг
             with open(server_config_path, 'w') as f:
@@ -215,12 +220,19 @@ def list_clients(vpn_config_dir: str, docker_compose_dir: str = None) -> str:
                         logger.error(f"Ошибка чтения файла {file}: {e}")
                         continue
         
-        result = "👥 \\*\\*Список клиентов:\\*\\*\n\n"
+        total_clients = len(peers)
+        result = f"👥 \\*\\*Список клиентов\\*\\* \\(всего: {total_clients}\\)\n\n"
+        
         for i, (pub_key, ip) in enumerate(peers, 1):
             client_name = ip_to_name.get(ip, f"client_{ip}")
             escaped_name = escape_markdown_v2(client_name)
             escaped_ip = escape_markdown_v2(f"{VPN_BASE_IP}.{ip}")
-            result += f"\\`{i}\\.\\` \\*\\*{escaped_name}\\*\\* \\- \\`{escaped_ip}\\`\n"
+            # Форматирование: номер жирным, имя жирным, IP в моноширинном шрифте
+            result += f"\\*\\*{i}\\.\\*\\* \\*\\*{escaped_name}\\*\\*\n"
+            result += f"   \\`{escaped_ip}\\`\n"
+            # Добавляем разделитель между клиентами (кроме последнего)
+            if i < total_clients:
+                result += "\n"
         
         return result
     
