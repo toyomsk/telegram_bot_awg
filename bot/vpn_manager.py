@@ -66,8 +66,21 @@ AllowedIPs = {VPN_BASE_IP}.{client_ip}/32
         
         logger.info(f"Добавлен пир {client_name} в серверный конфиг")
         
-        # Создание клиентского конфига
-        client_config = f"""[Interface]
+        # Создание клиентского конфига (без параметров AmneziaVPN для совместимости)
+        client_config_basic = f"""[Interface]
+PrivateKey = {private_key}
+Address = {VPN_BASE_IP}.{client_ip}/32
+DNS = {DNS_SERVERS_FORMATTED}
+
+[Peer]
+PublicKey = {server_public_key}
+PresharedKey = {psk}
+Endpoint = {external_ip}:{wg_port}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25"""
+        
+        # Полный конфиг с параметрами AmneziaVPN для возврата
+        client_config_full = f"""[Interface]
 PrivateKey = {private_key}
 Address = {VPN_BASE_IP}.{client_ip}/32
 DNS = {DNS_SERVERS_FORMATTED}
@@ -88,12 +101,12 @@ Endpoint = {external_ip}:{wg_port}
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25"""
         
-        # Сохранить клиентский конфиг
+        # Сохранить клиентский конфиг без параметров AmneziaVPN
         with open(client_config_path, 'w') as f:
-            f.write(client_config)
+            f.write(client_config_basic)
         
         logger.info(f"Создан клиент {client_name} с IP {VPN_BASE_IP}.{client_ip}")
-        return True, client_config
+        return True, client_config_full
     
     except Exception as e:
         logger.error(f"Ошибка создания клиента {client_name}: {e}")
@@ -213,7 +226,7 @@ def list_clients(vpn_config_dir: str, docker_compose_dir: str = None) -> str:
         return f"❌ Ошибка при получении списка: {e}"
 
 def get_client_config(client_name: str, vpn_config_dir: str) -> Optional[str]:
-    """Получить конфиг клиента."""
+    """Получить конфиг клиента с параметрами AmneziaVPN."""
     try:
         config_path = os.path.join(vpn_config_dir, f"{client_name}.conf")
         
@@ -221,7 +234,34 @@ def get_client_config(client_name: str, vpn_config_dir: str) -> Optional[str]:
             return None
         
         with open(config_path, 'r') as f:
-            return f.read()
+            config_content = f.read()
+        
+        # Добавляем параметры AmneziaVPN перед секцией [Peer]
+        # Если параметры уже есть, не добавляем их повторно
+        if 'Jc =' in config_content:
+            return config_content
+        
+        # Находим позицию перед [Peer]
+        peer_pos = config_content.find('[Peer]')
+        if peer_pos == -1:
+            return config_content
+        
+        # Добавляем параметры AmneziaVPN перед [Peer]
+        amnezia_params = f"""Jc = {AMNEZIA_JC}
+Jmin = {AMNEZIA_JMIN}
+Jmax = {AMNEZIA_JMAX}
+S1 = {AMNEZIA_S1}
+S2 = {AMNEZIA_S2}
+H1 = {AMNEZIA_H1}
+H2 = {AMNEZIA_H2}
+H3 = {AMNEZIA_H3}
+H4 = {AMNEZIA_H4}
+
+"""
+        
+        # Вставляем параметры перед [Peer]
+        config_with_params = config_content[:peer_pos] + amnezia_params + config_content[peer_pos:]
+        return config_with_params
     
     except Exception as e:
         logger.error(f"Ошибка чтения конфига клиента {client_name}: {e}")
