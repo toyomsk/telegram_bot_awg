@@ -256,6 +256,46 @@ def get_server_status(docker_compose_dir: str, vpn_config_dir: str) -> str:
         logger.error(f"Ошибка при получении статуса: {e}")
         return f"❌ Ошибка при получении статуса: {e}"
 
+def _get_container_name() -> Optional[str]:
+    """Получить имя контейнера Amnezia."""
+    try:
+        result = subprocess.run(
+            ['docker', 'ps', '--filter', 'name=amnezia-awg', '--format', '{{.Names}}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            container_name = result.stdout.strip().split('\n')[0]
+            logger.info(f"Найден контейнер: {container_name}")
+            return container_name
+    except Exception as e:
+        logger.warning(f"Не удалось найти контейнер: {e}")
+    return None
+
+def _run_wg_in_container(cmd: list, container_name: Optional[str] = None) -> subprocess.CompletedProcess:
+    """Выполнить команду wg внутри Docker контейнера."""
+    if container_name is None:
+        container_name = _get_container_name()
+    
+    if container_name:
+        # Выполняем команду через docker exec
+        docker_cmd = ['docker', 'exec', container_name] + cmd
+        return subprocess.run(
+            docker_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+    else:
+        # Если контейнер не найден, выполняем на хосте
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
 def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
     """Применить конфигурацию WireGuard без перезапуска (добавление новых пиров через wg set)."""
     try:
@@ -263,15 +303,12 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         if not os.path.exists(config_path):
             return False, "Конфиг не найден"
         
+        container_name = _get_container_name()
+        
         # Получаем список текущих пиров из интерфейса
         existing_peers = set()
         try:
-            result = subprocess.run(
-                ['wg', 'show', WG_INTERFACE],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
+            result = _run_wg_in_container(['wg', 'show', WG_INTERFACE], container_name)
             if result.returncode == 0 and result.stdout.strip():
                 # Парсим публичные ключи пиров из вывода wg show
                 # Формат: peer: <публичный_ключ>
@@ -333,14 +370,9 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
                 logger.warning(f"Не найден AllowedIPs для пира {public_key[:8]}...")
                 continue
             
-            # Выполняем команду
+            # Выполняем команду внутри контейнера
             logger.info(f"Выполняем команду: {' '.join(cmd[:4])}... (скрыт ключ)")
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            result = _run_wg_in_container(cmd, container_name)
             
             if result.returncode == 0:
                 new_peers_added += 1
