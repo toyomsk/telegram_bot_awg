@@ -148,24 +148,61 @@ def delete_client(
         # Удаляем пира из серверного конфига
         if os.path.exists(server_config_path):
             with open(server_config_path, 'r') as f:
-                server_config = f.read()
+                lines = f.readlines()
             
-            # Удаляем секцию [Peer] с этим публичным ключом
-            # Используем более надежный подход: находим секцию [Peer] с нужным ключом и удаляем до следующей секции или конца файла
-            escaped_key = re.escape(client_public_key)
+            new_lines = []
+            skip_current_peer = False
             
-            # Паттерн ищет секцию [Peer] с нужным публичным ключом и удаляет её полностью
-            # до следующей секции [Peer] или [Interface] или конца файла
-            pattern = rf'\[Peer\][^\[]*?PublicKey\s*=\s*{escaped_key}[^\[]*?(?=\n\[(?:Peer|Interface)\]|\Z)'
-            
-            new_config = re.sub(pattern, '', server_config, flags=re.DOTALL | re.MULTILINE)
-            
-            # Удаляем лишние пустые строки (более 2 подряд)
-            new_config = re.sub(r'\n{3,}', '\n\n', new_config)
+            for line in lines:
+                stripped = line.strip()
+                
+                if stripped == '[Peer]':
+                    # Начало новой секции [Peer]
+                    skip_current_peer = False
+                    new_lines.append(line)
+                    
+                elif stripped.startswith('PublicKey'):
+                    # Проверяем ключ
+                    key_match = re.search(r'PublicKey\s*=\s*([^\s]+)', line)
+                    if key_match:
+                        found_key = key_match.group(1).strip()
+                        if found_key == client_public_key:
+                            # Это нужный пир - удаляем всю предыдущую секцию [Peer]
+                            # Находим последний [Peer] в new_lines
+                            last_peer_idx = None
+                            for i in range(len(new_lines) - 1, -1, -1):
+                                if new_lines[i].strip() == '[Peer]':
+                                    last_peer_idx = i
+                                    break
+                            
+                            if last_peer_idx is not None:
+                                # Удаляем все строки от [Peer] включительно
+                                new_lines = new_lines[:last_peer_idx]
+                                logger.info(f"Удалена секция [Peer] с ключом {client_public_key[:20]}...")
+                            
+                            skip_current_peer = True
+                            # Не добавляем эту строку и пропускаем остальные до следующей секции
+                            continue
+                        else:
+                            # Это не нужный пир, добавляем строку
+                            new_lines.append(line)
+                    else:
+                        new_lines.append(line)
+                        
+                elif stripped.startswith('['):
+                    # Другая секция (например, [Interface]) - сбрасываем флаг пропуска
+                    skip_current_peer = False
+                    new_lines.append(line)
+                    
+                else:
+                    # Обычная строка секции
+                    if not skip_current_peer:
+                        new_lines.append(line)
+                    # Если skip_current_peer = True, просто пропускаем строку
             
             # Сохраняем обновленный конфиг
             with open(server_config_path, 'w') as f:
-                f.write(new_config)
+                f.writelines(new_lines)
             
             logger.info(f"Удален пир {client_name} из серверного конфига")
         
