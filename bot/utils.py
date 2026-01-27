@@ -187,6 +187,31 @@ def generate_keys() -> Tuple[Optional[str], Optional[str], Optional[str]]:
         logger.error(f"Ошибка генерации ключей: {e}")
         return None, None, None
 
+def decode_amnezia_config(vpn_string: str) -> dict:
+    """Декодирование строки vpn:// обратно в JSON для проверки."""
+    try:
+        encoded_data = vpn_string.replace("vpn://", "")
+        # Добавляем padding если нужно
+        padding = 4 - (len(encoded_data) % 4)
+        if padding != 4:
+            encoded_data += "=" * padding
+        
+        compressed_data = base64.urlsafe_b64decode(encoded_data)
+        
+        # Читаем длину из первых 4 байт
+        original_data_len = int.from_bytes(compressed_data[:4], byteorder='big')
+        
+        # Декомпрессируем начиная с 5-го байта
+        decompressed_data = zlib.decompress(compressed_data[4:])
+        
+        if len(decompressed_data) != original_data_len:
+            raise ValueError(f"Неверная длина декомпрессированных данных: ожидалось {original_data_len}, получено {len(decompressed_data)}")
+        
+        return json.loads(decompressed_data.decode('utf-8'), object_pairs_hook=collections.OrderedDict)
+    except Exception as e:
+        logger.error(f"Ошибка декодирования конфигурации AmneziaVPN: {e}")
+        raise
+
 def encode_amnezia_config(config_json: dict) -> str:
     """Кодирование JSON конфигурации AmneziaVPN в формат vpn://."""
     try:
@@ -209,6 +234,14 @@ def encode_amnezia_config(config_json: dict) -> str:
         
         result = f"vpn://{encoded_data}"
         logger.debug(f"Закодированная строка vpn:// длиной {len(result)} символов")
+        
+        # Проверяем, что можем декодировать обратно
+        try:
+            decoded = decode_amnezia_config(result)
+            logger.debug(f"Проверка декодирования успешна, структура корректна")
+        except Exception as decode_error:
+            logger.warning(f"Не удалось декодировать созданную строку обратно: {decode_error}")
+        
         return result
     except Exception as e:
         logger.error(f"Ошибка кодирования конфигурации AmneziaVPN: {e}")
@@ -217,33 +250,32 @@ def encode_amnezia_config(config_json: dict) -> str:
 def wireguard_config_to_amnezia_json(wg_config_text: str, client_name: str = "VPN", dns1: str = "1.1.1.1", dns2: str = "8.8.8.8") -> dict:
     """Преобразование WireGuard конфига в JSON формат AmneziaVPN."""
     try:
-        # Парсим WireGuard конфиг для извлечения параметров
-        import configparser
-        config_parser = configparser.ConfigParser()
-        config_parser.optionxform = lambda optionstr: optionstr  # Сохраняем регистр
-        config_parser.read_string(wg_config_text)
+        # Извлекаем параметры из конфига через regex (более надежно, чем configparser)
+        # Получаем MTU из секции Interface
+        mtu_match = re.search(r'\[Interface\].*?MTU\s*=\s*(\d+)', wg_config_text, re.DOTALL | re.IGNORECASE)
+        mtu = int(mtu_match.group(1)) if mtu_match else 1420
         
-        # Извлекаем параметры из конфига
-        interface = config_parser['Interface']
-        peer = config_parser['Peer']
+        # Получаем порт из Endpoint в секции Peer
+        endpoint_match = re.search(r'\[Peer\].*?Endpoint\s*=\s*([^:\s]+):(\d+)', wg_config_text, re.DOTALL | re.IGNORECASE)
+        port = int(endpoint_match.group(2)) if endpoint_match else 51820
         
-        # Получаем MTU (если есть) или используем значение по умолчанию
-        mtu = interface.get('MTU', '1420')
-        # Получаем порт из Endpoint или используем значение по умолчанию
-        endpoint = peer.get('Endpoint', '')
-        port = '51820'
-        if ':' in endpoint:
-            port = endpoint.split(':')[1]
+        logger.debug(f"Извлечены параметры: MTU={mtu}, Port={port}")
         
-        # Создаем структуру last_config
-        last_config = collections.OrderedDict([
-            ("config", wg_config_text),
-            ("mtu", int(mtu)),
-            ("port", int(port))
-        ])
+        # Создаем структуру last_config (должна быть JSON строка)
+        # Используем обычный dict, не OrderedDict
+        last_config_dict = {
+            "config": wg_config_text,
+            "mtu": mtu,
+            "port": port
+        }
+        
+        # Преобразуем в JSON строку без лишних пробелов
+        last_config_json_str = json.dumps(last_config_dict, separators=(',', ':'))
+        logger.debug(f"last_config JSON: {last_config_json_str[:200]}...")
         
         # Создаем JSON структуру для AmneziaVPN
         # Структура должна соответствовать формату AmneziaVPN
+        # Используем OrderedDict для сохранения порядка полей (важно для совместимости)
         config_json = collections.OrderedDict([
             ("config_version", 1.0),
             ("name", client_name),
@@ -255,15 +287,16 @@ def wireguard_config_to_amnezia_json(wg_config_text: str, client_name: str = "VP
                     ("container", "amneziaWg"),
                     ("protocol", "amneziaWg"),
                     ("awg", collections.OrderedDict([
-                        ("last_config", json.dumps(last_config))
+                        ("last_config", last_config_json_str)
                     ]))
                 ])
             ])
         ])
         
+        logger.debug(f"Создан JSON конфиг с {len(config_json['containers'])} контейнером")
         return config_json
     except Exception as e:
-        logger.error(f"Ошибка преобразования конфига WireGuard в JSON: {e}")
+        logger.error(f"Ошибка преобразования конфига WireGuard в JSON: {e}", exc_info=True)
         raise
 
 def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
@@ -287,13 +320,21 @@ def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
 def generate_amnezia_qr_code(wg_config_text: str, client_name: str = "VPN", dns1: str = "1.1.1.1", dns2: str = "8.8.8.8") -> Optional[io.BytesIO]:
     """Генерация QR-кода в формате AmneziaVPN (vpn://...)."""
     try:
+        logger.info(f"Генерация QR-кода AmneziaVPN для клиента {client_name}")
+        logger.debug(f"Конфиг длиной {len(wg_config_text)} символов")
+        
         # Преобразуем WireGuard конфиг в JSON формат AmneziaVPN
         config_json = wireguard_config_to_amnezia_json(wg_config_text, client_name, dns1, dns2)
+        
+        # Проверяем структуру JSON перед кодированием
+        json_str_check = json.dumps(config_json, indent=2)
+        logger.debug(f"JSON структура:\n{json_str_check[:500]}...")
         
         # Кодируем в формат vpn://
         vpn_string = encode_amnezia_config(config_json)
         
-        logger.debug(f"Сгенерирована строка vpn:// длиной {len(vpn_string)} символов")
+        logger.info(f"Сгенерирована строка vpn:// длиной {len(vpn_string)} символов")
+        logger.debug(f"Первые 100 символов: {vpn_string[:100]}...")
         
         # Генерируем QR-код
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
@@ -306,9 +347,10 @@ def generate_amnezia_qr_code(wg_config_text: str, client_name: str = "VPN", dns1
         bio = io.BytesIO()
         img.save(bio, 'PNG')
         bio.seek(0)
+        logger.info(f"QR-код успешно сгенерирован")
         return bio
     except Exception as e:
-        logger.error(f"Ошибка генерации QR-кода AmneziaVPN: {e}")
+        logger.error(f"Ошибка генерации QR-кода AmneziaVPN: {e}", exc_info=True)
         return None
 
 def get_server_status(docker_compose_dir: str, vpn_config_dir: str) -> str:
