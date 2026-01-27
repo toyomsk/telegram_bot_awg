@@ -145,7 +145,7 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     client_name = context.args[0]
-    config_content = get_client_config(client_name, DOCKER_COMPOSE_DIR)
+    config_content = get_client_config(client_name, VPN_CONFIG_DIR)
     
     if not config_content:
         await update.message.reply_text(
@@ -204,7 +204,7 @@ async def list_clients_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ Недостаточно прав")
         return
     
-    clients_list = list_clients(VPN_CONFIG_DIR, DOCKER_COMPOSE_DIR)
+    clients_list = list_clients(VPN_CONFIG_DIR)
     await update.message.reply_text(clients_list, parse_mode=ParseMode.MARKDOWN_V2)
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -248,7 +248,7 @@ async def delete_client_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     client_name = context.args[0]
-    config_path = os.path.join(DOCKER_COMPOSE_DIR, f"{client_name}.conf")
+    config_path = os.path.join(VPN_CONFIG_DIR, f"{client_name}.conf")
     
     if not os.path.exists(config_path):
         await update.message.reply_text(

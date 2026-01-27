@@ -34,7 +34,7 @@ def create_client(
     """Создать нового клиента."""
     try:
         # Проверка существования клиента
-        client_config_path = os.path.join(docker_compose_dir, f"{client_name}.conf")
+        client_config_path = os.path.join(vpn_config_dir, f"{client_name}.conf")
         if os.path.exists(client_config_path):
             return False, f"Клиент `{client_name}` уже существует"
         
@@ -106,7 +106,7 @@ def delete_client(
 ) -> Tuple[bool, str]:
     """Удалить клиента."""
     try:
-        client_config_path = os.path.join(docker_compose_dir, f"{client_name}.conf")
+        client_config_path = os.path.join(vpn_config_dir, f"{client_name}.conf")
         server_config_path = os.path.join(vpn_config_dir, "wg0.conf")
         
         # Проверка существования клиентского конфига
@@ -160,7 +160,7 @@ def delete_client(
         logger.error(f"Ошибка удаления клиента {client_name}: {e}")
         return False, f"Ошибка удаления: {e}"
 
-def list_clients(vpn_config_dir: str, docker_compose_dir: str) -> str:
+def list_clients(vpn_config_dir: str, docker_compose_dir: str = None) -> str:
     """Получить список клиентов."""
     try:
         server_config_path = os.path.join(vpn_config_dir, "wg0.conf")
@@ -182,11 +182,11 @@ def list_clients(vpn_config_dir: str, docker_compose_dir: str) -> str:
         
         # Создаем словарь IP -> имя клиента
         ip_to_name = {}
-        if os.path.exists(docker_compose_dir):
-            for file in os.listdir(docker_compose_dir):
+        if os.path.exists(vpn_config_dir):
+            for file in os.listdir(vpn_config_dir):
                 if file.endswith('.conf') and file != 'wg0.conf':
                     try:
-                        file_path = os.path.join(docker_compose_dir, file)
+                        file_path = os.path.join(vpn_config_dir, file)
                         with open(file_path, 'r') as f:
                             file_content = f.read()
                             # Ищем IP в файле
@@ -212,10 +212,10 @@ def list_clients(vpn_config_dir: str, docker_compose_dir: str) -> str:
         logger.error(f"Ошибка получения списка клиентов: {e}")
         return f"❌ Ошибка при получении списка: {e}"
 
-def get_client_config(client_name: str, docker_compose_dir: str) -> Optional[str]:
+def get_client_config(client_name: str, vpn_config_dir: str) -> Optional[str]:
     """Получить конфиг клиента."""
     try:
-        config_path = os.path.join(docker_compose_dir, f"{client_name}.conf")
+        config_path = os.path.join(vpn_config_dir, f"{client_name}.conf")
         
         if not os.path.exists(config_path):
             return None
