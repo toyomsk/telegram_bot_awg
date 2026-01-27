@@ -161,7 +161,7 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         config_file.name = f"{client_name}.conf"
         
         # Генерация QR-кода в формате AmneziaVPN
-        qr_image = generate_amnezia_qr_code(config_content)
+        qr_image = generate_amnezia_qr_code(config_content, client_name)
         
         # Генерация команды для Keenetic
         keenetic_cmd = generate_keenetic_command()
