@@ -287,7 +287,7 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
             if stripped.startswith('[') and stripped != '[Interface]':
                 in_interface = False
             
-            # В секции [Interface] пропускаем параметры AmneziaVPN и Address
+            # В секции [Interface] пропускаем параметры AmneziaVPN, Address и команды
             # wg syncconf не понимает эти параметры в [Interface]
             if in_interface:
                 param_name = stripped.split('=')[0].strip() if '=' in stripped else ''
@@ -296,6 +296,9 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
                     continue
                 # Пропускаем Address полностью (wg syncconf не понимает Address в [Interface])
                 if param_name == 'Address':
+                    continue
+                # Пропускаем команды PreUp, PostUp, PreDown, PostDown (wg syncconf не понимает их)
+                if param_name in ['PreUp', 'PostUp', 'PreDown', 'PostDown']:
                     continue
             
             cleaned_lines.append(line)
