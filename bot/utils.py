@@ -258,44 +258,82 @@ def get_server_status(docker_compose_dir: str, vpn_config_dir: str) -> str:
 
 def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
     """Применить конфигурацию WireGuard без перезапуска (wg syncconf)."""
+    import tempfile
+    
     try:
         config_path = os.path.join(vpn_config_dir, "wg0.conf")
         if not os.path.exists(config_path):
             return False, "Конфиг не найден"
         
-        # Используем wg syncconf для применения изменений без перезапуска
-        result = subprocess.run(
-            ['wg', 'syncconf', WG_INTERFACE, config_path],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
+        # Читаем оригинальный конфиг
+        with open(config_path, 'r') as f:
+            config_content = f.read()
         
-        if result.returncode == 0:
-            logger.info(f"Конфигурация WireGuard применена через syncconf")
-            return True, "✅ Конфигурация применена"
-        else:
-            error_msg = result.stderr if result.stderr else result.stdout
-            # Проверяем, является ли ошибка критичной
-            # Если это просто предупреждение о нераспознанных параметрах (AmneziaVPN),
-            # конфигурация все равно может применяться
-            if "unrecognized" in error_msg.lower() or "parsing error" in error_msg.lower():
-                # Проверяем, применилась ли конфигурация, проверяя интерфейс
-                check_result = subprocess.run(
-                    ['wg', 'show', WG_INTERFACE],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if check_result.returncode == 0:
-                    # Интерфейс существует и работает, значит конфигурация применилась
-                    # Предупреждения о нераспознанных параметрах AmneziaVPN не критичны
-                    logger.info(f"Конфигурация применена (предупреждения о нераспознанных параметрах AmneziaVPN игнорированы)")
-                    return True, "✅ Конфигурация применена"
+        # Удаляем параметры AmneziaVPN и Address с /32 из секции [Interface]
+        # Эти параметры не поддерживаются стандартным wg syncconf
+        lines = config_content.split('\n')
+        cleaned_lines = []
+        in_interface = False
+        
+        for line in lines:
+            stripped = line.strip()
+            # Определяем начало секции [Interface]
+            if stripped == '[Interface]':
+                in_interface = True
+                cleaned_lines.append(line)
+                continue
             
-            # Если это критичная ошибка, возвращаем её
-            logger.warning(f"Ошибка syncconf: {error_msg}")
-            return False, f"Ошибка syncconf: {error_msg}"
+            # Определяем конец секции [Interface] (начало [Peer])
+            if stripped.startswith('[') and stripped != '[Interface]':
+                in_interface = False
+            
+            # В секции [Interface] пропускаем параметры AmneziaVPN
+            if in_interface:
+                param_name = stripped.split('=')[0].strip() if '=' in stripped else ''
+                # Пропускаем параметры AmneziaVPN
+                if param_name in ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']:
+                    continue
+                # Заменяем Address с /32 на Address без маски (wg syncconf не понимает /32 в [Interface])
+                if param_name == 'Address' and '/32' in stripped:
+                    # Оставляем только IP без маски, сохраняя отступы
+                    ip_part = stripped.split('=')[1].strip().split('/')[0] if '=' in stripped else ''
+                    # Сохраняем отступы из оригинальной строки
+                    indent = len(line) - len(line.lstrip())
+                    cleaned_lines.append(' ' * indent + f"Address = {ip_part}")
+                    continue
+            
+            cleaned_lines.append(line)
+        
+        # Создаем временный конфиг без параметров AmneziaVPN
+        temp_config = '\n'.join(cleaned_lines)
+        
+        # Создаем временный файл
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as temp_file:
+            temp_file.write(temp_config)
+            temp_config_path = temp_file.name
+        
+        try:
+            # Используем wg syncconf с очищенным конфигом
+            result = subprocess.run(
+                ['wg', 'syncconf', WG_INTERFACE, temp_config_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                logger.info(f"Конфигурация WireGuard применена через syncconf")
+                return True, "✅ Конфигурация применена"
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                logger.warning(f"Ошибка syncconf: {error_msg}")
+                return False, f"Ошибка syncconf: {error_msg}"
+        finally:
+            # Удаляем временный файл
+            try:
+                os.unlink(temp_config_path)
+            except Exception:
+                pass
             
     except FileNotFoundError:
         logger.error("Команда wg не найдена")
