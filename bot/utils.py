@@ -297,7 +297,7 @@ def _run_wg_in_container(cmd: list, container_name: Optional[str] = None) -> sub
         )
 
 def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
-    """Применить конфигурацию WireGuard без перезапуска (добавление новых пиров через wg set)."""
+    """Применить конфигурацию WireGuard без перезапуска (добавление только последнего нового пира через wg set)."""
     try:
         config_path = os.path.join(vpn_config_dir, "wg0.conf")
         if not os.path.exists(config_path):
@@ -317,82 +317,77 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
                 logger.info(f"Найдено существующих пиров: {len(existing_peers)}")
         except Exception as e:
             logger.warning(f"Не удалось получить список текущих пиров: {e}")
-            # Если не удалось получить список, будем пытаться добавлять все пиры из конфига
-            # (если пир уже существует, wg set вернет ошибку, но это не критично)
             existing_peers = set()
         
-        # Читаем конфиг и находим новые пиры
+        # Читаем конфиг и находим последний пир (самый новый, добавленный в конец)
         with open(config_path, 'r') as f:
             config_content = f.read()
         
-        # Парсим пиры из конфига
-        # Ищем все секции [Peer]
+        # Находим все секции [Peer] и берем последнюю
         peer_sections = re.findall(
             r'\[Peer\]\s*\n(.*?)(?=\n\[Peer\]|\n\[Interface\]|\Z)',
             config_content,
             re.DOTALL
         )
         
-        new_peers_added = 0
-        errors = []
+        if not peer_sections:
+            return True, "✅ Конфигурация актуальна (пиров нет в конфиге)"
         
-        for peer_section in peer_sections:
-            # Извлекаем публичный ключ
-            public_key_match = re.search(r'PublicKey\s*=\s*([A-Za-z0-9+/=]{44})', peer_section)
-            if not public_key_match:
-                continue
-            
-            public_key = public_key_match.group(1).strip()
-            
-            if not public_key:
-                continue
-            
-            # Проверяем, есть ли уже такой пир
-            if public_key in existing_peers:
-                logger.debug(f"Пир {public_key[:8]}... уже существует, пропускаем")
-                continue
-            
-            logger.info(f"Найден новый пир для добавления: {public_key[:8]}...")
-            
-            # Формируем команду wg set для добавления пира
-            cmd = ['wg', 'set', WG_INTERFACE, 'peer', public_key]
-            
-            # Добавляем PresharedKey если есть
-            psk_match = re.search(r'PresharedKey\s*=\s*([A-Za-z0-9+/=]{44})', peer_section)
-            if psk_match:
-                cmd.extend(['preshared-key', psk_match.group(1)])
-            
-            # Добавляем AllowedIPs
-            allowed_ips_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', peer_section)
-            if allowed_ips_match:
-                cmd.extend(['allowed-ips', allowed_ips_match.group(1)])
-            else:
-                logger.warning(f"Не найден AllowedIPs для пира {public_key[:8]}...")
-                continue
-            
-            # Выполняем команду внутри контейнера
-            logger.info(f"Выполняем команду: {' '.join(cmd[:4])}... (скрыт ключ)")
-            result = _run_wg_in_container(cmd, container_name)
-            
-            if result.returncode == 0:
-                new_peers_added += 1
-                logger.info(f"✅ Добавлен пир {public_key[:8]}...")
-            else:
-                error_msg = result.stderr if result.stderr else result.stdout
-                # Если пир уже существует, это не критичная ошибка
-                if "already exists" in error_msg.lower() or "file exists" in error_msg.lower():
-                    logger.info(f"Пир {public_key[:8]}... уже существует, пропускаем")
-                else:
-                    errors.append(f"Ошибка добавления пира {public_key[:8]}...: {error_msg}")
-                    logger.warning(f"Ошибка добавления пира: {error_msg}")
+        # Берем последний пир (самый новый)
+        last_peer_section = peer_sections[-1]
         
-        if new_peers_added > 0:
-            logger.info(f"Добавлено новых пиров: {new_peers_added}")
-            return True, f"✅ Конфигурация применена (добавлено пиров: {new_peers_added})"
-        elif errors:
-            return False, f"Ошибки при добавлении пиров: {'; '.join(errors)}"
+        # Извлекаем публичный ключ
+        public_key_match = re.search(r'PublicKey\s*=\s*([A-Za-z0-9+/=]{44})', last_peer_section)
+        if not public_key_match:
+            return False, "Не удалось найти публичный ключ последнего пира"
+        
+        public_key = public_key_match.group(1).strip()
+        
+        # Проверяем, есть ли уже такой пир
+        if public_key in existing_peers:
+            logger.info(f"Пир {public_key[:8]}... уже существует в интерфейсе")
+            return True, "✅ Конфигурация актуальна (пир уже применен)"
+        
+        logger.info(f"Добавляем новый пир: {public_key[:8]}...")
+        
+        # Формируем команду wg set для добавления пира
+        cmd = ['wg', 'set', WG_INTERFACE, 'peer', public_key]
+        
+        # Добавляем PresharedKey если есть
+        psk_match = re.search(r'PresharedKey\s*=\s*([A-Za-z0-9+/=]{44})', last_peer_section)
+        if psk_match:
+            cmd.extend(['preshared-key', psk_match.group(1)])
+        
+        # Добавляем AllowedIPs
+        allowed_ips_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', last_peer_section)
+        if allowed_ips_match:
+            cmd.extend(['allowed-ips', allowed_ips_match.group(1)])
         else:
-            return True, "✅ Конфигурация актуальна (новых пиров нет)"
+            return False, "Не найден AllowedIPs для последнего пира"
+        
+        # Выполняем команду внутри контейнера
+        logger.info(f"Выполняем команду: {' '.join(cmd[:4])}... (скрыт ключ)")
+        result = _run_wg_in_container(cmd, container_name)
+        
+        if result.returncode == 0:
+            logger.info(f"✅ Добавлен пир {public_key[:8]}...")
+            return True, f"✅ Конфигурация применена (добавлен пир {public_key[:8]}...)"
+        else:
+            error_msg = result.stderr if result.stderr else result.stdout
+            # Если пир уже существует, это не критичная ошибка
+            if "already exists" in error_msg.lower() or "file exists" in error_msg.lower():
+                logger.info(f"Пир {public_key[:8]}... уже существует")
+                return True, "✅ Конфигурация актуальна (пир уже существует)"
+            else:
+                logger.warning(f"Ошибка добавления пира: {error_msg}")
+                return False, f"Ошибка добавления пира: {error_msg}"
+            
+    except FileNotFoundError:
+        logger.error("Команда wg не найдена")
+        return False, "wg команда недоступна"
+    except Exception as e:
+        logger.error(f"Ошибка применения конфигурации: {e}")
+        return False, f"Ошибка: {e}"
             
     except FileNotFoundError:
         logger.error("Команда wg не найдена")
