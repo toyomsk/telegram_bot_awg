@@ -287,19 +287,15 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
             if stripped.startswith('[') and stripped != '[Interface]':
                 in_interface = False
             
-            # В секции [Interface] пропускаем параметры AmneziaVPN
+            # В секции [Interface] пропускаем параметры AmneziaVPN и Address
+            # wg syncconf не понимает эти параметры в [Interface]
             if in_interface:
                 param_name = stripped.split('=')[0].strip() if '=' in stripped else ''
                 # Пропускаем параметры AmneziaVPN
                 if param_name in ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']:
                     continue
-                # Заменяем Address с /32 на Address без маски (wg syncconf не понимает /32 в [Interface])
-                if param_name == 'Address' and '/32' in stripped:
-                    # Оставляем только IP без маски, сохраняя отступы
-                    ip_part = stripped.split('=')[1].strip().split('/')[0] if '=' in stripped else ''
-                    # Сохраняем отступы из оригинальной строки
-                    indent = len(line) - len(line.lstrip())
-                    cleaned_lines.append(' ' * indent + f"Address = {ip_part}")
+                # Пропускаем Address полностью (wg syncconf не понимает Address в [Interface])
+                if param_name == 'Address':
                     continue
             
             cleaned_lines.append(line)
