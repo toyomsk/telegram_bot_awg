@@ -393,6 +393,16 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
             
             if result.returncode == 0:
                 logger.info(f"Конфигурация WireGuard применена через syncconf")
+                
+                # Проверяем, что пиры действительно применены
+                try:
+                    check_result = _run_wg_in_container(['wg', 'show', WG_INTERFACE], container_name)
+                    if check_result.returncode == 0:
+                        peer_count = len(re.findall(r'peer:\s*([A-Za-z0-9+/=]{44})', check_result.stdout))
+                        logger.info(f"Проверка: в интерфейсе {peer_count} пиров")
+                except Exception as e:
+                    logger.warning(f"Не удалось проверить статус интерфейса: {e}")
+                
                 return True, "✅ Конфигурация применена"
             else:
                 error_msg = result.stderr if result.stderr else result.stdout
