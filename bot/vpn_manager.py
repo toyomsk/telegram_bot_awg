@@ -294,15 +294,17 @@ def list_clients(vpn_config_dir: str, docker_compose_dir: str = None) -> str:
                         continue
         
         total_clients = len(peers)
-        result = f"👥 \\*\\*Список клиентов\\*\\* \\(всего: {total_clients}\\)\n\n"
+        escaped_total = escape_markdown_v2(str(total_clients))
+        result = f"👥 *Список клиентов* \\(всего: {escaped_total}\\)\n\n"
         
         for i, (pub_key, ip) in enumerate(peers, 1):
             client_name = ip_to_name.get(ip, f"client_{ip}")
             escaped_name = escape_markdown_v2(client_name)
             escaped_ip = escape_markdown_v2(f"{VPN_BASE_IP}.{ip}")
+            escaped_i = escape_markdown_v2(str(i))
             # Форматирование: номер жирным, имя жирным, IP в моноширинном шрифте
-            result += f"\\*\\*{i}\\.\\*\\* \\*\\*{escaped_name}\\*\\*\n"
-            result += f"   \\`{escaped_ip}\\`\n"
+            result += f"*{escaped_i}\\.* *{escaped_name}*\n"
+            result += f"   `{escaped_ip}`\n"
             # Добавляем разделитель между клиентами (кроме последнего)
             if i < total_clients:
                 result += "\n"

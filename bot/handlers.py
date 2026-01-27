@@ -49,13 +49,13 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("❌ У вас нет прав доступа к этому боту.")
         return
     
-    welcome_text = """🎛 \\*\\*VPN Manager Bot\\*\\*
+    welcome_text = """🎛 *VPN Manager Bot*
 
 Доступные команды:
-/add\\_client \\`\\<имя\\>\\` \\- Создать клиента
+/add\\_client `\\<имя\\>` \\- Создать клиента
 /list\\_clients \\- Список клиентов  
-/get\\_config \\`\\<имя\\>\\` \\- Получить конфиг
-/delete\\_client \\`\\<имя\\>\\` \\- Удалить клиента
+/get\\_config `\\<имя\\>` \\- Получить конфиг
+/delete\\_client `\\<имя\\>` \\- Удалить клиента
 /status \\- Статус сервера
 /restart \\- Перезапуск VPN
 /help \\- Эта справка"""
@@ -76,7 +76,7 @@ async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     if not context.args:
         await update.message.reply_text(
-            "❌ Укажите имя клиента: \\`/add\\_client имя\\`",
+            "❌ Укажите имя клиента: `/add\\_client имя`",
             parse_mode=ParseMode.MARKDOWN_V2
         )
         return
@@ -91,7 +91,7 @@ async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     await update.message.reply_text(
-        f"🔄 Создаю клиента \\`{escape_markdown_v2(client_name)}\\`\\.\\.\\.",
+        f"🔄 Создаю клиента `{escape_markdown_v2(client_name)}`\\.\\.\\.",
         parse_mode=ParseMode.MARKDOWN_V2
     )
     
@@ -135,26 +135,26 @@ async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if qr_image:
                 await update.message.reply_photo(
                     photo=qr_image,
-                    caption=f"📱 QR\\-код для \\`{escape_markdown_v2(client_name)}\\`",
+                    caption=f"📱 QR\\-код для `{escape_markdown_v2(client_name)}`",
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
             
             # Отправляем файл конфига
             await update.message.reply_document(
                 document=config_file,
-                caption=f"📋 Конфиг для \\`{escape_markdown_v2(client_name)}\\`",
+                caption=f"📋 Конфиг для `{escape_markdown_v2(client_name)}`",
                 parse_mode=ParseMode.MARKDOWN_V2
             )
             
             # Отправляем команду для Keenetic
-            keenetic_info = f"""🔧 \\*\\*Команда для роутера Keenetic:\\*\\*
+            keenetic_info = f"""🔧 *Команда для роутера Keenetic:*
 
-\\`{escape_markdown_v2(keenetic_cmd)}\\`
+`{escape_markdown_v2(keenetic_cmd)}`
 
-ℹ️ \\*\\*Информация:\\*\\*
-• Для начала необходимо создать новое подключение с помощью приложенного конфиг\\-файла
-• После этого необходимо узнать имя нового интерфейса: \\`show interface\\`
-• Чтобы сохранить параметры необходимо выполнить команду: \\`system configuration save\\`
+ℹ️ *Информация:*
+\\- Для начала необходимо создать новое подключение с помощью приложенного конфиг\\-файла
+\\- После этого необходимо узнать имя нового интерфейса: `{escape_markdown_v2('show interface')}`
+\\- Чтобы сохранить параметры необходимо выполнить команду: `{escape_markdown_v2('system configuration save')}`
 """
             await update.message.reply_text(keenetic_info, parse_mode=ParseMode.MARKDOWN_V2)
             
@@ -176,7 +176,7 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     if not context.args:
         await update.message.reply_text(
-            "❌ Укажите имя клиента: \\`/get\\_config имя\\`",
+            "❌ Укажите имя клиента: `/get\\_config имя`",
             parse_mode=ParseMode.MARKDOWN_V2
         )
         return
@@ -186,7 +186,7 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     if not config_content:
         await update.message.reply_text(
-            f"❌ Клиент \\`{escape_markdown_v2(client_name)}\\` не найден",
+            f"❌ Клиент `{escape_markdown_v2(client_name)}` не найден",
             parse_mode=ParseMode.MARKDOWN_V2
         )
         return
@@ -206,26 +206,26 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if qr_image:
             await update.message.reply_photo(
                 photo=qr_image,
-                caption=f"📱 QR\\-код для \\`{escape_markdown_v2(client_name)}\\`",
+                caption=f"📱 QR\\-код для `{escape_markdown_v2(client_name)}`",
                 parse_mode=ParseMode.MARKDOWN_V2
             )
         
         # Отправляем файл конфига
         await update.message.reply_document(
             document=config_file,
-            caption=f"📋 Конфиг для \\`{escape_markdown_v2(client_name)}\\`",
+            caption=f"📋 Конфиг для `{escape_markdown_v2(client_name)}`",
             parse_mode=ParseMode.MARKDOWN_V2
         )
         
         # Отправляем команду для Keenetic
-        keenetic_info = f"""🔧 \\*\\*Команда для роутера Keenetic:\\*\\*
+        keenetic_info = f"""🔧 *Команда для роутера Keenetic:*
 
-\\`{escape_markdown_v2(keenetic_cmd)}\\`
+`{escape_markdown_v2(keenetic_cmd)}`
 
-ℹ️ \\*\\*Информация:\\*\\*
-• Для начала необходимо создать новое подключение с помощью приложенного конфиг\\-файла
-• После этого необходимо узнать имя нового интерфейса: \\`show interface\\`
-• Чтобы сохранить параметры необходимо выполнить команду: \\`system configuration save\\`
+ℹ️ *Информация:*
+\\- Для начала необходимо создать новое подключение с помощью приложенного конфиг\\-файла
+\\- После этого необходимо узнать имя нового интерфейса: `{escape_markdown_v2('show interface')}`
+\\- Чтобы сохранить параметры необходимо выполнить команду: `{escape_markdown_v2('system configuration save')}`
 """
         await update.message.reply_text(keenetic_info, parse_mode=ParseMode.MARKDOWN_V2)
         
@@ -279,7 +279,7 @@ async def delete_client_handler(update: Update, context: ContextTypes.DEFAULT_TY
     
     if not context.args:
         await update.message.reply_text(
-            "❌ Укажите имя клиента: \\`/delete\\_client имя\\`",
+            "❌ Укажите имя клиента: `/delete\\_client имя`",
             parse_mode=ParseMode.MARKDOWN_V2
         )
         return
@@ -289,7 +289,7 @@ async def delete_client_handler(update: Update, context: ContextTypes.DEFAULT_TY
     
     if not os.path.exists(config_path):
         await update.message.reply_text(
-            f"❌ Клиент \\`{escape_markdown_v2(client_name)}\\` не найден",
+            f"❌ Клиент `{escape_markdown_v2(client_name)}` не найден",
             parse_mode=ParseMode.MARKDOWN_V2
         )
         return
@@ -302,7 +302,7 @@ async def delete_client_handler(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        f"⚠️ Вы уверены, что хотите удалить клиента \\`{escape_markdown_v2(client_name)}\\`\\?\nЭто действие необратимо\\!",
+        f"⚠️ Вы уверены, что хотите удалить клиента `{escape_markdown_v2(client_name)}`\\?\nЭто действие необратимо\\!",
         reply_markup=reply_markup,
         parse_mode=ParseMode.MARKDOWN_V2
     )
@@ -326,7 +326,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Применение изменений конфигурации VPN
             restart_success, restart_msg = restart_vpn(DOCKER_COMPOSE_DIR, VPN_CONFIG_DIR)
             
-            status_msg = f"✅ Клиент \\`{escape_markdown_v2(client_name)}\\` удален\n"
+            status_msg = f"✅ Клиент `{escape_markdown_v2(client_name)}` удален\n"
             if restart_success:
                 status_msg += f"🔄 {escape_markdown_v2(restart_msg)}"
             else:

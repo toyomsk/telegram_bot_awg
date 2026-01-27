@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def escape_markdown_v2(text: str) -> str:
     """Экранирование специальных символов для Markdown V2."""
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '<', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
     return text
@@ -245,17 +245,19 @@ def get_server_status(docker_compose_dir: str, vpn_config_dir: str) -> str:
         external_ip = get_external_ip()
         
         # Используем code блок для Docker статуса, чтобы избежать проблем с экранированием
-        status = f"""🖥 **Статус сервера:**
+        escaped_wg_info = escape_markdown_v2(wg_info)
+        escaped_external_ip = escape_markdown_v2(external_ip)
+        status = f"""🖥 *Статус сервера:*
 
-📦 **Docker:**
+📦 *Docker:*
 ```
 {docker_status}
 ```
 
-🔐 **WireGuard:**
-{wg_info}
+🔐 *WireGuard:*
+{escaped_wg_info}
 
-🌐 **Внешний IP:** `{external_ip}`
+🌐 *Внешний IP:* `{escaped_external_ip}`
 """
         return status
         
