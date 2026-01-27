@@ -326,26 +326,6 @@ def get_client_config(client_name: str, vpn_config_dir: str) -> Optional[str]:
         with open(config_path, 'r') as f:
             config_content = f.read()
         
-        # Заменяем IPv6 адреса в Endpoint на IPv4
-        # Ищем Endpoint с адресом (может быть IPv4 или IPv6)
-        endpoint_pattern = r'Endpoint\s*=\s*(\[?)([^\]:]+)(\]?):(\d+)'
-        def replace_ipv6(match):
-            bracket_before = match.group(1)
-            addr = match.group(2)
-            bracket_after = match.group(3)
-            port = match.group(4)
-            # Проверяем, что это IPv6 (содержит двоеточия в адресе, но не точки)
-            # IPv6 адреса имеют формат типа 2a03:f480:1:13::d или 2001:db8::1
-            if ':' in addr and '.' not in addr:
-                # Получаем IPv4 адрес
-                ipv4 = get_external_ip()
-                if ipv4 != "UNKNOWN_IP":
-                    logger.info(f"Заменен IPv6 адрес {addr} на IPv4 {ipv4} в конфиге {client_name}")
-                    return f"Endpoint = {ipv4}:{port}"
-            return match.group(0)  # Если не IPv6 или не удалось получить IPv4, оставляем как есть
-        
-        config_content = re.sub(endpoint_pattern, replace_ipv6, config_content)
-        
         # Добавляем параметры AmneziaVPN перед секцией [Peer]
         # Если параметры уже есть, не добавляем их повторно
         if 'Jc =' in config_content:

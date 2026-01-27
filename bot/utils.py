@@ -6,7 +6,7 @@ import qrcode
 import io
 import logging
 from typing import Optional, Tuple, Dict
-from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, DOCKER_COMPOSE_DIR
+from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, DOCKER_COMPOSE_DIR, EXTERNAL_IF
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,33 @@ def escape_markdown_v2(text: str) -> str:
     return text
 
 def get_external_ip() -> str:
-    """Получить внешний IPv4 адрес сервера."""
+    """Получить внешний IPv4 адрес сервера из сетевого интерфейса."""
     try:
-        # Используем -4 для принудительного использования IPv4
+        # Получаем IPv4 адрес из сетевого интерфейса
+        result = subprocess.run(
+            ['ip', 'addr', 'show', EXTERNAL_IF],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            # Ищем строку с 'inet ' и извлекаем IP адрес
+            for line in result.stdout.split('\n'):
+                if 'inet ' in line:
+                    # Формат: inet 192.168.1.1/24 ...
+                    parts = line.strip().split()
+                    if len(parts) >= 2:
+                        ip_with_prefix = parts[1]
+                        # Убираем префикс /24
+                        ip = ip_with_prefix.split('/')[0]
+                        # Проверяем, что это IPv4 (содержит точки)
+                        if '.' in ip:
+                            return ip
+    except Exception as e:
+        logger.error(f"Ошибка получения внешнего IP из интерфейса {EXTERNAL_IF}: {e}")
+    
+    # Fallback на curl если не удалось получить из интерфейса
+    try:
         result = subprocess.run(
             ['curl', '-4', '-s', 'ifconfig.me'],
             capture_output=True,
@@ -28,29 +52,9 @@ def get_external_ip() -> str:
             timeout=10
         )
         if result.returncode == 0:
-            ip = result.stdout.strip()
-            # Проверяем, что это действительно IPv4 адрес
-            if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
-                return ip
-            else:
-                logger.warning(f"Получен не IPv4 адрес: {ip}, пробуем альтернативный метод")
+            return result.stdout.strip()
     except Exception as e:
-        logger.error(f"Ошибка получения внешнего IP: {e}")
-    
-    # Fallback: пробуем другой сервис
-    try:
-        result = subprocess.run(
-            ['curl', '-4', '-s', 'ipv4.icanhazip.com'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0:
-            ip = result.stdout.strip()
-            if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
-                return ip
-    except Exception as e:
-        logger.error(f"Ошибка получения внешнего IP через fallback: {e}")
+        logger.error(f"Ошибка получения внешнего IP через curl: {e}")
     
     return "UNKNOWN_IP"
 

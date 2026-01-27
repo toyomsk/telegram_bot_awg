@@ -150,6 +150,9 @@ AMNEZIA_H4 = _AMNEZIA_PARAMS['H4']
 # Имя интерфейса WireGuard (обычно wg0)
 WG_INTERFACE = os.getenv("WG_INTERFACE", "wg0")
 
+# Имя внешнего сетевого интерфейса для получения IP адреса
+EXTERNAL_IF = os.getenv("EXTERNAL_IF", "eth0")
+
 def is_admin(user_id: int) -> bool:
     """Проверка, является ли пользователь администратором."""
     return user_id in ADMIN_IDS
