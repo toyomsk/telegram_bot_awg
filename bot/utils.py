@@ -304,9 +304,7 @@ def _run_wg_in_container(cmd: list, container_name: Optional[str] = None) -> sub
         )
 
 def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
-    """Применить конфигурацию WireGuard без перезапуска (wg syncconf)."""
-    import tempfile
-    
+    """Применить конфигурацию WireGuard без перезапуска (wg-quick strip + wg syncconf)."""
     try:
         config_path = os.path.join(vpn_config_dir, "wg0.conf")
         if not os.path.exists(config_path):
@@ -314,113 +312,35 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         
         container_name = _get_container_name()
         
-        # Читаем оригинальный конфиг
-        with open(config_path, 'r') as f:
-            config_content = f.read()
+        if not container_name:
+            return False, "Контейнер не найден"
         
-        # Удаляем параметры AmneziaVPN, Address и команды из секции [Interface]
-        # Эти параметры не поддерживаются стандартным wg syncconf
-        lines = config_content.split('\n')
-        cleaned_lines = []
-        in_interface = False
+        # Используем process substitution для передачи результата wg-quick strip напрямую в wg syncconf
+        cmd = f"wg syncconf {WG_INTERFACE} <(wg-quick strip {config_path})"
+        result = subprocess.run(
+            ['docker', 'exec', container_name, 'bash', '-c', cmd],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
         
-        for line in lines:
-            stripped = line.strip()
-            # Определяем начало секции [Interface]
-            if stripped == '[Interface]':
-                in_interface = True
-                cleaned_lines.append(line)
-                continue
+        if result.returncode == 0:
+            logger.info(f"Конфигурация WireGuard применена через syncconf")
             
-            # Определяем конец секции [Interface] (начало [Peer])
-            if stripped.startswith('[') and stripped != '[Interface]':
-                in_interface = False
-            
-            # В секции [Interface] пропускаем параметры AmneziaVPN, Address и команды
-            # wg syncconf не понимает эти параметры в [Interface]
-            if in_interface:
-                param_name = stripped.split('=')[0].strip() if '=' in stripped else ''
-                # Пропускаем параметры AmneziaVPN
-                if param_name in ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']:
-                    continue
-                # Пропускаем Address полностью (wg syncconf не понимает Address в [Interface])
-                if param_name == 'Address':
-                    continue
-                # Пропускаем команды PreUp, PostUp, PreDown, PostDown (wg syncconf не понимает их)
-                if param_name in ['PreUp', 'PostUp', 'PreDown', 'PostDown']:
-                    continue
-            
-            cleaned_lines.append(line)
-        
-        # Создаем временный конфиг без параметров AmneziaVPN
-        temp_config = '\n'.join(cleaned_lines)
-        
-        # Создаем временный файл
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as temp_file:
-            temp_file.write(temp_config)
-            temp_config_path = temp_file.name
-        
-        try:
-            if container_name:
-                # Копируем временный файл в контейнер
-                container_temp_path = f"/tmp/wg0_syncconf.conf"
-                
-                cp_result = subprocess.run(
-                    ['docker', 'cp', temp_config_path, f'{container_name}:{container_temp_path}'],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                
-                if cp_result.returncode != 0:
-                    return False, f"Ошибка копирования конфига в контейнер: {cp_result.stderr}"
-                
-                # Используем wg syncconf с очищенным конфигом внутри контейнера
-                result = subprocess.run(
-                    ['docker', 'exec', container_name, 'wg', 'syncconf', WG_INTERFACE, container_temp_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                
-                # Удаляем временный файл из контейнера
-                subprocess.run(
-                    ['docker', 'exec', container_name, 'rm', '-f', container_temp_path],
-                    capture_output=True,
-                    timeout=5
-                )
-            else:
-                # Используем wg syncconf с очищенным конфигом на хосте
-                result = subprocess.run(
-                    ['wg', 'syncconf', WG_INTERFACE, temp_config_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-            
-            if result.returncode == 0:
-                logger.info(f"Конфигурация WireGuard применена через syncconf")
-                
-                # Проверяем, что пиры действительно применены
-                try:
-                    check_result = _run_wg_in_container(['wg', 'show', WG_INTERFACE], container_name)
-                    if check_result.returncode == 0:
-                        peer_count = len(re.findall(r'peer:\s*([A-Za-z0-9+/=]{44})', check_result.stdout))
-                        logger.info(f"Проверка: в интерфейсе {peer_count} пиров")
-                except Exception as e:
-                    logger.warning(f"Не удалось проверить статус интерфейса: {e}")
-                
-                return True, "✅ Конфигурация применена"
-            else:
-                error_msg = result.stderr if result.stderr else result.stdout
-                logger.warning(f"Ошибка syncconf: {error_msg}")
-                return False, f"Ошибка syncconf: {error_msg}"
-        finally:
-            # Удаляем временный файл с хоста
+            # Проверяем, что пиры действительно применены
             try:
-                os.unlink(temp_config_path)
-            except Exception:
-                pass
+                check_result = _run_wg_in_container(['wg', 'show', WG_INTERFACE], container_name)
+                if check_result.returncode == 0:
+                    peer_count = len(re.findall(r'peer:\s*([A-Za-z0-9+/=]{44})', check_result.stdout))
+                    logger.info(f"Проверка: в интерфейсе {peer_count} пиров")
+            except Exception as e:
+                logger.warning(f"Не удалось проверить статус интерфейса: {e}")
+            
+            return True, "✅ Конфигурация применена"
+        else:
+            error_msg = result.stderr if result.stderr else result.stdout
+            logger.warning(f"Ошибка syncconf: {error_msg}")
+            return False, f"Ошибка syncconf: {error_msg}"
             
     except FileNotFoundError:
         logger.error("Команда wg не найдена")
