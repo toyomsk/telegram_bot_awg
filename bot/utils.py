@@ -9,6 +9,7 @@ import json
 import base64
 import zlib
 import collections
+import configparser
 from typing import Optional, Tuple, Dict
 from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, WG_RELOAD_METHOD, DOCKER_COMPOSE_DIR
 
@@ -213,11 +214,33 @@ def encode_amnezia_config(config_json: dict) -> str:
         logger.error(f"Ошибка кодирования конфигурации AmneziaVPN: {e}")
         raise
 
-def wireguard_config_to_amnezia_json(wg_config_text: str, client_name: str = "VPN") -> dict:
+def wireguard_config_to_amnezia_json(wg_config_text: str, client_name: str = "VPN", dns1: str = "1.1.1.1", dns2: str = "8.8.8.8") -> dict:
     """Преобразование WireGuard конфига в JSON формат AmneziaVPN."""
     try:
-        # Кодируем конфиг WireGuard в Base64
-        wg_config_base64 = base64.b64encode(wg_config_text.encode()).decode()
+        # Парсим WireGuard конфиг для извлечения параметров
+        import configparser
+        config_parser = configparser.ConfigParser()
+        config_parser.optionxform = lambda optionstr: optionstr  # Сохраняем регистр
+        config_parser.read_string(wg_config_text)
+        
+        # Извлекаем параметры из конфига
+        interface = config_parser['Interface']
+        peer = config_parser['Peer']
+        
+        # Получаем MTU (если есть) или используем значение по умолчанию
+        mtu = interface.get('MTU', '1420')
+        # Получаем порт из Endpoint или используем значение по умолчанию
+        endpoint = peer.get('Endpoint', '')
+        port = '51820'
+        if ':' in endpoint:
+            port = endpoint.split(':')[1]
+        
+        # Создаем структуру last_config
+        last_config = collections.OrderedDict([
+            ("config", wg_config_text),
+            ("mtu", int(mtu)),
+            ("port", int(port))
+        ])
         
         # Создаем JSON структуру для AmneziaVPN
         # Структура должна соответствовать формату AmneziaVPN
@@ -225,11 +248,15 @@ def wireguard_config_to_amnezia_json(wg_config_text: str, client_name: str = "VP
             ("config_version", 1.0),
             ("name", client_name),
             ("description", f"WireGuard VPN configuration for {client_name}"),
+            ("dns1", dns1),
+            ("dns2", dns2),
             ("containers", [
                 collections.OrderedDict([
                     ("container", "amneziaWg"),
                     ("protocol", "amneziaWg"),
-                    ("config", wg_config_base64)
+                    ("awg", collections.OrderedDict([
+                        ("last_config", json.dumps(last_config))
+                    ]))
                 ])
             ])
         ])
@@ -257,11 +284,11 @@ def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
         logger.error(f"Ошибка генерации QR-кода: {e}")
         return None
 
-def generate_amnezia_qr_code(wg_config_text: str, client_name: str = "VPN") -> Optional[io.BytesIO]:
+def generate_amnezia_qr_code(wg_config_text: str, client_name: str = "VPN", dns1: str = "1.1.1.1", dns2: str = "8.8.8.8") -> Optional[io.BytesIO]:
     """Генерация QR-кода в формате AmneziaVPN (vpn://...)."""
     try:
         # Преобразуем WireGuard конфиг в JSON формат AmneziaVPN
-        config_json = wireguard_config_to_amnezia_json(wg_config_text, client_name)
+        config_json = wireguard_config_to_amnezia_json(wg_config_text, client_name, dns1, dns2)
         
         # Кодируем в формат vpn://
         vpn_string = encode_amnezia_config(config_json)

@@ -20,7 +20,8 @@ from config.settings import (
     AMNEZIA_H1,
     AMNEZIA_H2,
     AMNEZIA_H3,
-    AMNEZIA_H4
+    AMNEZIA_H4,
+    DNS_SERVERS
 )
 from bot.vpn_manager import (
     create_client,
@@ -161,7 +162,9 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         config_file.name = f"{client_name}.conf"
         
         # Генерация QR-кода в формате AmneziaVPN
-        qr_image = generate_amnezia_qr_code(config_content, client_name)
+        dns1 = DNS_SERVERS[0] if len(DNS_SERVERS) > 0 else "1.1.1.1"
+        dns2 = DNS_SERVERS[1] if len(DNS_SERVERS) > 1 else "8.8.8.8"
+        qr_image = generate_amnezia_qr_code(config_content, client_name, dns1, dns2)
         
         # Генерация команды для Keenetic
         keenetic_cmd = generate_keenetic_command()
