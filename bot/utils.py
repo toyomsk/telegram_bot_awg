@@ -18,18 +18,40 @@ def escape_markdown_v2(text: str) -> str:
     return text
 
 def get_external_ip() -> str:
-    """Получить внешний IP сервера."""
+    """Получить внешний IPv4 адрес сервера."""
     try:
+        # Используем -4 для принудительного использования IPv4
         result = subprocess.run(
-            ['curl', '-s', 'ifconfig.me'],
+            ['curl', '-4', '-s', 'ifconfig.me'],
             capture_output=True,
             text=True,
             timeout=10
         )
         if result.returncode == 0:
-            return result.stdout.strip()
+            ip = result.stdout.strip()
+            # Проверяем, что это действительно IPv4 адрес
+            if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+                return ip
+            else:
+                logger.warning(f"Получен не IPv4 адрес: {ip}, пробуем альтернативный метод")
     except Exception as e:
         logger.error(f"Ошибка получения внешнего IP: {e}")
+    
+    # Fallback: пробуем другой сервис
+    try:
+        result = subprocess.run(
+            ['curl', '-4', '-s', 'ipv4.icanhazip.com'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            ip = result.stdout.strip()
+            if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+                return ip
+    except Exception as e:
+        logger.error(f"Ошибка получения внешнего IP через fallback: {e}")
+    
     return "UNKNOWN_IP"
 
 def get_amnezia_params(vpn_config_dir: str) -> Optional[Dict[str, int]]:
