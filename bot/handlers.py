@@ -108,16 +108,59 @@ async def add_client_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         status_msg = "✅ Клиент создан успешно\\!\n"
         if restart_success:
-            status_msg += f"🔄 {escape_markdown_v2(restart_msg)}\n\n"
+            status_msg += f"🔄 {escape_markdown_v2(restart_msg)}\n"
         else:
-            status_msg += f"⚠️ {escape_markdown_v2(restart_msg)}\n\n"
-        
-        status_msg += f"📋 Используйте \\`/get\\_config {escape_markdown_v2(client_name)}\\` для получения конфига"
+            status_msg += f"⚠️ {escape_markdown_v2(restart_msg)}\n"
         
         await update.message.reply_text(
             status_msg,
             parse_mode=ParseMode.MARKDOWN_V2
         )
+        
+        # Отправка конфига сразу после создания
+        config_content = config_or_error  # create_client возвращает полный конфиг при успехе
+        
+        try:
+            # Отправка конфига файлом
+            config_file = io.BytesIO(config_content.encode('utf-8'))
+            config_file.name = f"{client_name}.conf"
+            
+            # Генерация QR-кода
+            qr_image = generate_qr_code(config_content)
+            
+            # Генерация команды для Keenetic
+            keenetic_cmd = generate_keenetic_command()
+            
+            # Отправляем QR-код
+            if qr_image:
+                await update.message.reply_photo(
+                    photo=qr_image,
+                    caption=f"📱 QR\\-код для \\`{escape_markdown_v2(client_name)}\\`",
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            
+            # Отправляем файл конфига
+            await update.message.reply_document(
+                document=config_file,
+                caption=f"📋 Конфиг для \\`{escape_markdown_v2(client_name)}\\`",
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            
+            # Отправляем команду для Keenetic
+            keenetic_info = f"""🔧 \\*\\*Команда для роутера Keenetic:\\*\\*
+
+\\`{escape_markdown_v2(keenetic_cmd)}\\`
+
+ℹ️ \\*\\*Информация:\\*\\*
+• Для начала необходимо создать новое подключение с помощью приложенного конфиг\\-файла
+• После этого необходимо узнать имя нового интерфейса: \\`show interface\\`
+• Чтобы сохранить параметры необходимо выполнить команду: \\`system configuration save\\`
+"""
+            await update.message.reply_text(keenetic_info, parse_mode=ParseMode.MARKDOWN_V2)
+            
+        except Exception as e:
+            logger.error(f"Ошибка отправки конфига: {e}")
+            await update.message.reply_text(f"❌ Ошибка отправки конфига: {e}")
     else:
         await update.message.reply_text(
             f"❌ Ошибка создания клиента: {config_or_error}"
