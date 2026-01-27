@@ -351,7 +351,7 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         logger.info(f"Добавляем новый пир: {public_key[:8]}...")
         
         # Формируем команду wg set для добавления пира
-        # Используем bash -c для правильной передачи ключей через echo
+        # Создаем временный файл с ключом внутри контейнера
         psk_match = re.search(r'PresharedKey\s*=\s*([A-Za-z0-9+/=]{44})', last_peer_section)
         allowed_ips_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', last_peer_section)
         
@@ -360,18 +360,31 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         
         allowed_ips = allowed_ips_match.group(1)
         
-        # Формируем команду через bash для правильной передачи ключей
-        if psk_match:
-            psk = psk_match.group(1)
-            # Используем echo для передачи ключей через pipe
-            wg_cmd = f"echo '{psk}' | wg set {WG_INTERFACE} peer {public_key} preshared-key - allowed-ips {allowed_ips}"
-        else:
-            wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} allowed-ips {allowed_ips}"
-        
         logger.info(f"Выполняем команду wg set для пира {public_key[:8]}...")
         
         if container_name:
-            # Выполняем через docker exec с bash
+            # Создаем временный файл с PSK внутри контейнера
+            temp_psk_file = f"/tmp/wg_psk_{public_key[:8]}.key"
+            
+            if psk_match:
+                psk = psk_match.group(1)
+                # Создаем файл с ключом внутри контейнера
+                create_psk_cmd = ['docker', 'exec', container_name, 'bash', '-c', f"echo '{psk}' > {temp_psk_file}"]
+                create_result = subprocess.run(
+                    create_psk_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if create_result.returncode != 0:
+                    return False, f"Ошибка создания файла PSK: {create_result.stderr}"
+                
+                # Используем файл с ключом
+                wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} preshared-key {temp_psk_file} allowed-ips {allowed_ips}"
+            else:
+                wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} allowed-ips {allowed_ips}"
+            
+            # Выполняем команду wg set
             cmd = ['docker', 'exec', container_name, 'bash', '-c', wg_cmd]
             result = subprocess.run(
                 cmd,
@@ -379,14 +392,41 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
                 text=True,
                 timeout=10
             )
+            
+            # Удаляем временный файл PSK
+            if psk_match:
+                subprocess.run(
+                    ['docker', 'exec', container_name, 'rm', '-f', temp_psk_file],
+                    capture_output=True,
+                    timeout=5
+                )
         else:
             # Выполняем на хосте
-            result = subprocess.run(
-                ['bash', '-c', wg_cmd],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            if psk_match:
+                psk = psk_match.group(1)
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.key') as temp_file:
+                    temp_file.write(psk)
+                    temp_psk_file = temp_file.name
+                
+                try:
+                    wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} preshared-key {temp_psk_file} allowed-ips {allowed_ips}"
+                    result = subprocess.run(
+                        ['bash', '-c', wg_cmd],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                finally:
+                    os.unlink(temp_psk_file)
+            else:
+                wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} allowed-ips {allowed_ips}"
+                result = subprocess.run(
+                    ['bash', '-c', wg_cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
         
         if result.returncode == 0:
             logger.info(f"✅ Добавлен пир {public_key[:8]}...")
