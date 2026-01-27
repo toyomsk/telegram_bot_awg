@@ -250,28 +250,39 @@ def encode_amnezia_config(config_json: dict) -> str:
 def wireguard_config_to_amnezia_json(wg_config_text: str, client_name: str = "VPN", dns1: str = "1.1.1.1", dns2: str = "8.8.8.8") -> dict:
     """Преобразование WireGuard конфига в JSON формат AmneziaVPN."""
     try:
-        # Извлекаем параметры из конфига через regex (более надежно, чем configparser)
+        # Убираем параметры AmneziaVPN (Jc, Jmin и т.д.) из конфига для last_config
+        # Эти параметры специфичны для сервера и могут не нужны в клиентском конфиге
+        clean_config = wg_config_text
+        amnezia_params = ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']
+        for param in amnezia_params:
+            clean_config = re.sub(rf'^{param}\s*=\s*\d+\s*$', '', clean_config, flags=re.MULTILINE | re.IGNORECASE)
+        # Убираем пустые строки
+        clean_config = '\n'.join([line for line in clean_config.split('\n') if line.strip()])
+        
+        logger.debug(f"Очищенный конфиг (без параметров AmneziaVPN) длиной {len(clean_config)} символов")
+        
+        # Извлекаем параметры из конфига через regex
         # Получаем MTU из секции Interface
-        mtu_match = re.search(r'\[Interface\].*?MTU\s*=\s*(\d+)', wg_config_text, re.DOTALL | re.IGNORECASE)
+        mtu_match = re.search(r'\[Interface\].*?MTU\s*=\s*(\d+)', clean_config, re.DOTALL | re.IGNORECASE)
         mtu = int(mtu_match.group(1)) if mtu_match else 1420
         
         # Получаем порт из Endpoint в секции Peer
-        endpoint_match = re.search(r'\[Peer\].*?Endpoint\s*=\s*([^:\s]+):(\d+)', wg_config_text, re.DOTALL | re.IGNORECASE)
+        endpoint_match = re.search(r'\[Peer\].*?Endpoint\s*=\s*([^:\s]+):(\d+)', clean_config, re.DOTALL | re.IGNORECASE)
         port = int(endpoint_match.group(2)) if endpoint_match else 51820
         
         logger.debug(f"Извлечены параметры: MTU={mtu}, Port={port}")
         
         # Создаем структуру last_config (должна быть JSON строка)
-        # Используем обычный dict, не OrderedDict
+        # Используем очищенный конфиг без параметров AmneziaVPN
         last_config_dict = {
-            "config": wg_config_text,
+            "config": clean_config,
             "mtu": mtu,
             "port": port
         }
         
         # Преобразуем в JSON строку без лишних пробелов
         last_config_json_str = json.dumps(last_config_dict, separators=(',', ':'))
-        logger.debug(f"last_config JSON: {last_config_json_str[:200]}...")
+        logger.debug(f"last_config JSON: {last_config_json_str[:300]}...")
         
         # Создаем JSON структуру для AmneziaVPN
         # Структура должна соответствовать формату AmneziaVPN
