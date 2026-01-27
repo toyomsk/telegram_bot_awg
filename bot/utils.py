@@ -297,7 +297,9 @@ def _run_wg_in_container(cmd: list, container_name: Optional[str] = None) -> sub
         )
 
 def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
-    """Применить конфигурацию WireGuard без перезапуска (добавление только последнего нового пира через wg set)."""
+    """Применить конфигурацию WireGuard без перезапуска (wg syncconf)."""
+    import tempfile
+    
     try:
         config_path = os.path.join(vpn_config_dir, "wg0.conf")
         if not os.path.exists(config_path):
@@ -305,141 +307,103 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         
         container_name = _get_container_name()
         
-        # Получаем список текущих пиров из интерфейса
-        existing_peers = set()
-        try:
-            result = _run_wg_in_container(['wg', 'show', WG_INTERFACE], container_name)
-            if result.returncode == 0 and result.stdout.strip():
-                # Парсим публичные ключи пиров из вывода wg show
-                # Формат: peer: <публичный_ключ>
-                peer_keys = re.findall(r'peer:\s*([A-Za-z0-9+/=]{44})', result.stdout)
-                existing_peers = set(peer_keys)
-                logger.info(f"Найдено существующих пиров: {len(existing_peers)}")
-        except Exception as e:
-            logger.warning(f"Не удалось получить список текущих пиров: {e}")
-            existing_peers = set()
-        
-        # Читаем конфиг и находим последний пир (самый новый, добавленный в конец)
+        # Читаем оригинальный конфиг
         with open(config_path, 'r') as f:
             config_content = f.read()
         
-        # Находим все секции [Peer] и берем последнюю
-        peer_sections = re.findall(
-            r'\[Peer\]\s*\n(.*?)(?=\n\[Peer\]|\n\[Interface\]|\Z)',
-            config_content,
-            re.DOTALL
-        )
+        # Удаляем параметры AmneziaVPN, Address и команды из секции [Interface]
+        # Эти параметры не поддерживаются стандартным wg syncconf
+        lines = config_content.split('\n')
+        cleaned_lines = []
+        in_interface = False
         
-        if not peer_sections:
-            return True, "✅ Конфигурация актуальна (пиров нет в конфиге)"
-        
-        # Берем последний пир (самый новый)
-        last_peer_section = peer_sections[-1]
-        
-        # Извлекаем публичный ключ
-        public_key_match = re.search(r'PublicKey\s*=\s*([A-Za-z0-9+/=]{44})', last_peer_section)
-        if not public_key_match:
-            return False, "Не удалось найти публичный ключ последнего пира"
-        
-        public_key = public_key_match.group(1).strip()
-        
-        # Проверяем, есть ли уже такой пир
-        if public_key in existing_peers:
-            logger.info(f"Пир {public_key[:8]}... уже существует в интерфейсе")
-            return True, "✅ Конфигурация актуальна (пир уже применен)"
-        
-        logger.info(f"Добавляем новый пир: {public_key[:8]}...")
-        
-        # Формируем команду wg set для добавления пира
-        # Создаем временный файл с ключом внутри контейнера
-        psk_match = re.search(r'PresharedKey\s*=\s*([A-Za-z0-9+/=]{44})', last_peer_section)
-        allowed_ips_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', last_peer_section)
-        
-        if not allowed_ips_match:
-            return False, "Не найден AllowedIPs для последнего пира"
-        
-        allowed_ips = allowed_ips_match.group(1)
-        
-        logger.info(f"Выполняем команду wg set для пира {public_key[:8]}...")
-        
-        if container_name:
-            # Создаем временный файл с PSK внутри контейнера
-            temp_psk_file = f"/tmp/wg_psk_{public_key[:8]}.key"
+        for line in lines:
+            stripped = line.strip()
+            # Определяем начало секции [Interface]
+            if stripped == '[Interface]':
+                in_interface = True
+                cleaned_lines.append(line)
+                continue
             
-            if psk_match:
-                psk = psk_match.group(1)
-                # Создаем файл с ключом внутри контейнера
-                create_psk_cmd = ['docker', 'exec', container_name, 'bash', '-c', f"echo '{psk}' > {temp_psk_file}"]
-                create_result = subprocess.run(
-                    create_psk_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if create_result.returncode != 0:
-                    return False, f"Ошибка создания файла PSK: {create_result.stderr}"
+            # Определяем конец секции [Interface] (начало [Peer])
+            if stripped.startswith('[') and stripped != '[Interface]':
+                in_interface = False
+            
+            # В секции [Interface] пропускаем параметры AmneziaVPN, Address и команды
+            # wg syncconf не понимает эти параметры в [Interface]
+            if in_interface:
+                param_name = stripped.split('=')[0].strip() if '=' in stripped else ''
+                # Пропускаем параметры AmneziaVPN
+                if param_name in ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']:
+                    continue
+                # Пропускаем Address полностью (wg syncconf не понимает Address в [Interface])
+                if param_name == 'Address':
+                    continue
+                # Пропускаем команды PreUp, PostUp, PreDown, PostDown (wg syncconf не понимает их)
+                if param_name in ['PreUp', 'PostUp', 'PreDown', 'PostDown']:
+                    continue
+            
+            cleaned_lines.append(line)
+        
+        # Создаем временный конфиг без параметров AmneziaVPN
+        temp_config = '\n'.join(cleaned_lines)
+        
+        # Создаем временный файл
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as temp_file:
+            temp_file.write(temp_config)
+            temp_config_path = temp_file.name
+        
+        try:
+            if container_name:
+                # Копируем временный файл в контейнер
+                container_temp_path = f"/tmp/wg0_syncconf.conf"
                 
-                # Используем файл с ключом
-                wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} preshared-key {temp_psk_file} allowed-ips {allowed_ips}"
-            else:
-                wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} allowed-ips {allowed_ips}"
-            
-            # Выполняем команду wg set
-            cmd = ['docker', 'exec', container_name, 'bash', '-c', wg_cmd]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            # Удаляем временный файл PSK
-            if psk_match:
-                subprocess.run(
-                    ['docker', 'exec', container_name, 'rm', '-f', temp_psk_file],
-                    capture_output=True,
-                    timeout=5
-                )
-        else:
-            # Выполняем на хосте
-            if psk_match:
-                psk = psk_match.group(1)
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.key') as temp_file:
-                    temp_file.write(psk)
-                    temp_psk_file = temp_file.name
-                
-                try:
-                    wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} preshared-key {temp_psk_file} allowed-ips {allowed_ips}"
-                    result = subprocess.run(
-                        ['bash', '-c', wg_cmd],
-                        capture_output=True,
-                        text=True,
-                        timeout=10
-                    )
-                finally:
-                    os.unlink(temp_psk_file)
-            else:
-                wg_cmd = f"wg set {WG_INTERFACE} peer {public_key} allowed-ips {allowed_ips}"
-                result = subprocess.run(
-                    ['bash', '-c', wg_cmd],
+                cp_result = subprocess.run(
+                    ['docker', 'cp', temp_config_path, f'{container_name}:{container_temp_path}'],
                     capture_output=True,
                     text=True,
                     timeout=10
                 )
-        
-        if result.returncode == 0:
-            logger.info(f"✅ Добавлен пир {public_key[:8]}...")
-            return True, f"✅ Конфигурация применена (добавлен пир {public_key[:8]}...)"
-        else:
-            error_msg = result.stderr if result.stderr else result.stdout
-            # Если пир уже существует, это не критичная ошибка
-            if "already exists" in error_msg.lower() or "file exists" in error_msg.lower():
-                logger.info(f"Пир {public_key[:8]}... уже существует")
-                return True, "✅ Конфигурация актуальна (пир уже существует)"
+                
+                if cp_result.returncode != 0:
+                    return False, f"Ошибка копирования конфига в контейнер: {cp_result.stderr}"
+                
+                # Используем wg syncconf с очищенным конфигом внутри контейнера
+                result = subprocess.run(
+                    ['docker', 'exec', container_name, 'wg', 'syncconf', WG_INTERFACE, container_temp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                
+                # Удаляем временный файл из контейнера
+                subprocess.run(
+                    ['docker', 'exec', container_name, 'rm', '-f', container_temp_path],
+                    capture_output=True,
+                    timeout=5
+                )
             else:
-                logger.warning(f"Ошибка добавления пира: {error_msg}")
-                return False, f"Ошибка добавления пира: {error_msg}"
+                # Используем wg syncconf с очищенным конфигом на хосте
+                result = subprocess.run(
+                    ['wg', 'syncconf', WG_INTERFACE, temp_config_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+            
+            if result.returncode == 0:
+                logger.info(f"Конфигурация WireGuard применена через syncconf")
+                return True, "✅ Конфигурация применена"
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                logger.warning(f"Ошибка syncconf: {error_msg}")
+                return False, f"Ошибка syncconf: {error_msg}"
+        finally:
+            # Удаляем временный файл с хоста
+            try:
+                os.unlink(temp_config_path)
+            except Exception:
+                pass
             
     except FileNotFoundError:
         logger.error("Команда wg не найдена")
