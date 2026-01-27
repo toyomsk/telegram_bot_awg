@@ -5,6 +5,10 @@ import subprocess
 import qrcode
 import io
 import logging
+import json
+import base64
+import zlib
+import collections
 from typing import Optional, Tuple, Dict
 from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, WG_RELOAD_METHOD, DOCKER_COMPOSE_DIR
 
@@ -182,15 +186,52 @@ def generate_keys() -> Tuple[Optional[str], Optional[str], Optional[str]]:
         logger.error(f"Ошибка генерации ключей: {e}")
         return None, None, None
 
+def encode_amnezia_config(config_json: dict) -> str:
+    """Кодирование JSON конфигурации AmneziaVPN в формат vpn://."""
+    try:
+        # Преобразуем JSON в строку с отступами
+        json_str = json.dumps(config_json, indent=4).encode()
+        
+        # Сжимаем данные через zlib
+        compressed_data = zlib.compress(json_str)
+        
+        # Добавляем 4-байтовый заголовок с длиной оригинальных данных (big-endian)
+        original_data_len = len(json_str)
+        header = original_data_len.to_bytes(4, byteorder='big')
+        
+        # Объединяем заголовок и сжатые данные, кодируем в Base64 URL-safe
+        encoded_data = base64.urlsafe_b64encode(header + compressed_data).decode().rstrip("=")
+        
+        return f"vpn://{encoded_data}"
+    except Exception as e:
+        logger.error(f"Ошибка кодирования конфигурации AmneziaVPN: {e}")
+        raise
+
+def wireguard_config_to_amnezia_json(wg_config_text: str) -> dict:
+    """Преобразование WireGuard конфига в JSON формат AmneziaVPN."""
+    try:
+        # Кодируем конфиг WireGuard в Base64
+        wg_config_base64 = base64.b64encode(wg_config_text.encode()).decode()
+        
+        # Создаем JSON структуру для AmneziaVPN
+        config_json = collections.OrderedDict([
+            ("containers", [
+                collections.OrderedDict([
+                    ("container", "amneziaWg"),
+                    ("protocol", "amneziaWg"),
+                    ("config", wg_config_base64)
+                ])
+            ])
+        ])
+        
+        return config_json
+    except Exception as e:
+        logger.error(f"Ошибка преобразования конфига WireGuard в JSON: {e}")
+        raise
+
 def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
     """Генерация QR-кода для конфига."""
     try:
-        if not config_text or not config_text.strip():
-            logger.error("Передан пустой config_text для генерации QR-кода")
-            return None
-        
-        logger.debug(f"Генерация QR-кода для конфига длиной {len(config_text)} символов")
-        
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
         qr.add_data(config_text)
         qr.make(fit=True)
@@ -201,10 +242,34 @@ def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
         bio = io.BytesIO()
         img.save(bio, 'PNG')
         bio.seek(0)
-        bio.name = 'qr_code.png'  # Устанавливаем имя файла для Telegram API
         return bio
     except Exception as e:
         logger.error(f"Ошибка генерации QR-кода: {e}")
+        return None
+
+def generate_amnezia_qr_code(wg_config_text: str) -> Optional[io.BytesIO]:
+    """Генерация QR-кода в формате AmneziaVPN (vpn://...)."""
+    try:
+        # Преобразуем WireGuard конфиг в JSON формат AmneziaVPN
+        config_json = wireguard_config_to_amnezia_json(wg_config_text)
+        
+        # Кодируем в формат vpn://
+        vpn_string = encode_amnezia_config(config_json)
+        
+        # Генерируем QR-код
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(vpn_string)
+        qr.make(fit=True)
+        
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        # Сохранить в BytesIO
+        bio = io.BytesIO()
+        img.save(bio, 'PNG')
+        bio.seek(0)
+        return bio
+    except Exception as e:
+        logger.error(f"Ошибка генерации QR-кода AmneziaVPN: {e}")
         return None
 
 def get_server_status(docker_compose_dir: str, vpn_config_dir: str) -> str:

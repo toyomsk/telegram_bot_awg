@@ -30,6 +30,7 @@ from bot.vpn_manager import (
 )
 from bot.utils import (
     generate_qr_code,
+    generate_amnezia_qr_code,
     get_server_status,
     restart_vpn
 )
@@ -154,22 +155,13 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
     
-    if not config_content.strip():
-        logger.error(f"Конфиг клиента {client_name} пустой")
-        await update.message.reply_text(
-            f"❌ Конфиг клиента \\`{escape_markdown_v2(client_name)}\\` пустой",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        return
-    
     try:
         # Отправка конфига файлом
         config_file = io.BytesIO(config_content.encode('utf-8'))
         config_file.name = f"{client_name}.conf"
         
-        # Генерация QR-кода
-        logger.info(f"Генерация QR-кода для клиента {client_name}, длина конфига: {len(config_content)}")
-        qr_image = generate_qr_code(config_content)
+        # Генерация QR-кода в формате AmneziaVPN
+        qr_image = generate_amnezia_qr_code(config_content)
         
         # Генерация команды для Keenetic
         keenetic_cmd = generate_keenetic_command()
