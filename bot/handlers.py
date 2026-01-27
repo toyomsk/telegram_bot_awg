@@ -12,7 +12,6 @@ from config.settings import (
     VPN_CONFIG_DIR,
     DOCKER_COMPOSE_DIR,
     WG_PORT,
-    WG_INTERFACE,
     AMNEZIA_JC,
     AMNEZIA_JMIN,
     AMNEZIA_JMAX,
@@ -49,16 +48,16 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("❌ У вас нет прав доступа к этому боту.")
         return
     
-    welcome_text = """🎛 **VPN Manager Bot**
+    welcome_text = """🎛 \\*\\*VPN Manager Bot\\*\\*
 
 Доступные команды:
-/add\\_client `<имя>` - Создать клиента
-/list\\_clients - Список клиентов  
-/get\\_config `<имя>` - Получить конфиг
-/delete\\_client `<имя>` - Удалить клиента
-/status - Статус сервера
-/restart - Перезапуск VPN
-/help - Эта справка"""
+/add\\_client \\`<имя>\\` \\- Создать клиента
+/list\\_clients \\- Список клиентов  
+/get\\_config \\`<имя>\\` \\- Получить конфиг
+/delete\\_client \\`<имя>\\` \\- Удалить клиента
+/status \\- Статус сервера
+/restart \\- Перезапуск VPN
+/help \\- Эта справка"""
     
     await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN_V2)
 
