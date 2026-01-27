@@ -263,19 +263,25 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         if not os.path.exists(config_path):
             return False, "Конфиг не найден"
         
-        # Получаем список текущих пиров
+        # Получаем список текущих пиров из интерфейса
+        existing_peers = set()
         try:
             result = subprocess.run(
-                ['wg', 'show', WG_INTERFACE, 'peers'],
+                ['wg', 'show', WG_INTERFACE],
                 capture_output=True,
                 text=True,
                 timeout=5
             )
-            existing_peers = set()
             if result.returncode == 0 and result.stdout.strip():
-                existing_peers = set(result.stdout.strip().split('\n'))
+                # Парсим публичные ключи пиров из вывода wg show
+                # Формат: peer: <публичный_ключ>
+                peer_keys = re.findall(r'peer:\s*([A-Za-z0-9+/=]{44})', result.stdout)
+                existing_peers = set(peer_keys)
+                logger.info(f"Найдено существующих пиров: {len(existing_peers)}")
         except Exception as e:
             logger.warning(f"Не удалось получить список текущих пиров: {e}")
+            # Если не удалось получить список, будем пытаться добавлять все пиры из конфига
+            # (если пир уже существует, wg set вернет ошибку, но это не критично)
             existing_peers = set()
         
         # Читаем конфиг и находим новые пиры
@@ -283,50 +289,52 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
             config_content = f.read()
         
         # Парсим пиры из конфига
-        peer_pattern = r'\[Peer\]\s*\n(PublicKey\s*=\s*[^\s]+)\s*\n(?:PresharedKey\s*=\s*[^\s]+\s*\n)?(AllowedIPs\s*=\s*[^\s]+)'
-        peers = re.findall(peer_pattern, config_content, re.MULTILINE)
+        # Ищем все секции [Peer]
+        peer_sections = re.findall(
+            r'\[Peer\]\s*\n(.*?)(?=\n\[Peer\]|\n\[Interface\]|\Z)',
+            config_content,
+            re.DOTALL
+        )
         
         new_peers_added = 0
         errors = []
         
-        for peer_match in peers:
-            # Извлекаем данные пира
-            public_key_line = peer_match[0] if isinstance(peer_match, tuple) else peer_match
-            public_key = public_key_line.split('=')[1].strip() if '=' in public_key_line else None
+        for peer_section in peer_sections:
+            # Извлекаем публичный ключ
+            public_key_match = re.search(r'PublicKey\s*=\s*([A-Za-z0-9+/=]{44})', peer_section)
+            if not public_key_match:
+                continue
+            
+            public_key = public_key_match.group(1).strip()
             
             if not public_key:
                 continue
             
             # Проверяем, есть ли уже такой пир
             if public_key in existing_peers:
+                logger.debug(f"Пир {public_key[:8]}... уже существует, пропускаем")
                 continue
             
-            # Извлекаем остальные параметры пира
-            peer_section_match = re.search(
-                rf'\[Peer\]\s*\nPublicKey\s*=\s*{re.escape(public_key)}\s*\n(.*?)(?=\n\[Peer\]|\n\[Interface\]|\Z)',
-                config_content,
-                re.DOTALL
-            )
-            
-            if not peer_section_match:
-                continue
-            
-            peer_params = peer_section_match.group(1)
+            logger.info(f"Найден новый пир для добавления: {public_key[:8]}...")
             
             # Формируем команду wg set для добавления пира
             cmd = ['wg', 'set', WG_INTERFACE, 'peer', public_key]
             
             # Добавляем PresharedKey если есть
-            psk_match = re.search(r'PresharedKey\s*=\s*([^\s]+)', peer_params)
+            psk_match = re.search(r'PresharedKey\s*=\s*([A-Za-z0-9+/=]{44})', peer_section)
             if psk_match:
                 cmd.extend(['preshared-key', psk_match.group(1)])
             
             # Добавляем AllowedIPs
-            allowed_ips_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', peer_params)
+            allowed_ips_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', peer_section)
             if allowed_ips_match:
                 cmd.extend(['allowed-ips', allowed_ips_match.group(1)])
+            else:
+                logger.warning(f"Не найден AllowedIPs для пира {public_key[:8]}...")
+                continue
             
             # Выполняем команду
+            logger.info(f"Выполняем команду: {' '.join(cmd[:4])}... (скрыт ключ)")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -336,11 +344,15 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
             
             if result.returncode == 0:
                 new_peers_added += 1
-                logger.info(f"Добавлен пир {public_key[:8]}...")
+                logger.info(f"✅ Добавлен пир {public_key[:8]}...")
             else:
                 error_msg = result.stderr if result.stderr else result.stdout
-                errors.append(f"Ошибка добавления пира {public_key[:8]}...: {error_msg}")
-                logger.warning(f"Ошибка добавления пира: {error_msg}")
+                # Если пир уже существует, это не критичная ошибка
+                if "already exists" in error_msg.lower() or "file exists" in error_msg.lower():
+                    logger.info(f"Пир {public_key[:8]}... уже существует, пропускаем")
+                else:
+                    errors.append(f"Ошибка добавления пира {public_key[:8]}...: {error_msg}")
+                    logger.warning(f"Ошибка добавления пира: {error_msg}")
         
         if new_peers_added > 0:
             logger.info(f"Добавлено новых пиров: {new_peers_added}")
