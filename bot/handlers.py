@@ -11,7 +11,17 @@ from config.settings import (
     is_admin,
     VPN_CONFIG_DIR,
     DOCKER_COMPOSE_DIR,
-    WG_PORT
+    WG_PORT,
+    WG_INTERFACE,
+    AMNEZIA_JC,
+    AMNEZIA_JMIN,
+    AMNEZIA_JMAX,
+    AMNEZIA_S1,
+    AMNEZIA_S2,
+    AMNEZIA_H1,
+    AMNEZIA_H2,
+    AMNEZIA_H3,
+    AMNEZIA_H4
 )
 from bot.vpn_manager import (
     create_client,
@@ -26,6 +36,10 @@ from bot.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+def generate_keenetic_command() -> str:
+    """Генерация команды для роутеров Keenetic."""
+    return f"interface <INTERFACE> wireguard asc {AMNEZIA_JC} {AMNEZIA_JMIN} {AMNEZIA_JMAX} {AMNEZIA_S1} {AMNEZIA_S2} {AMNEZIA_H1} {AMNEZIA_H2} {AMNEZIA_H3} {AMNEZIA_H4}"
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /start."""
@@ -142,6 +156,9 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Генерация QR-кода
         qr_image = generate_qr_code(config_content)
         
+        # Генерация команды для Keenetic
+        keenetic_cmd = generate_keenetic_command()
+        
         # Отправляем QR-код
         if qr_image:
             await update.message.reply_photo(
@@ -156,6 +173,20 @@ async def get_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             caption=f"📋 Конфиг для `{client_name}`",
             parse_mode=ParseMode.MARKDOWN_V2
         )
+        
+        # Отправляем команду для Keenetic
+        keenetic_info = f"""🔧 **Команда для роутера Keenetic:**
+
+```
+{keenetic_cmd}
+```
+
+ℹ️ **Информация:**
+• Для начала необходимо создать новое подключение с помощью приложенного конфиг-файла
+• После этого необходимо узнать имя нового интерфейса: `show interface`
+• Чтобы сохранить параметры необходимо выполнить команду: `system configuration save`
+"""
+        await update.message.reply_text(keenetic_info, parse_mode=ParseMode.MARKDOWN_V2)
         
     except Exception as e:
         logger.error(f"Ошибка отправки конфига: {e}")

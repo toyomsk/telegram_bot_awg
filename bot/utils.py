@@ -5,7 +5,7 @@ import subprocess
 import qrcode
 import io
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from config.settings import VPN_BASE_IP, VPN_CLIENT_START_IP, VPN_CONFIG_DIR, WG_INTERFACE, WG_RELOAD_METHOD, DOCKER_COMPOSE_DIR
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,44 @@ def get_external_ip() -> str:
     except Exception as e:
         logger.error(f"Ошибка получения внешнего IP: {e}")
     return "UNKNOWN_IP"
+
+def get_amnezia_params(vpn_config_dir: str) -> Optional[Dict[str, int]]:
+    """Получить параметры AmneziaVPN из серверного конфига."""
+    try:
+        config_path = os.path.join(vpn_config_dir, "wg0.conf")
+        if not os.path.exists(config_path):
+            logger.warning(f"Конфиг не найден: {config_path}")
+            return None
+        
+        with open(config_path, 'r') as f:
+            content = f.read()
+        
+        # Ищем секцию [Interface] и извлекаем параметры
+        params = {}
+        param_names = ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4']
+        
+        for param_name in param_names:
+            # Ищем параметр в секции [Interface]
+            pattern = rf'\[Interface\].*?{param_name}\s*=\s*(\d+)'
+            match = re.search(pattern, content, re.DOTALL)
+            if match:
+                try:
+                    params[param_name] = int(match.group(1))
+                except ValueError:
+                    logger.warning(f"Не удалось преобразовать {param_name} в число")
+        
+        # Проверяем, что все параметры найдены
+        if len(params) == len(param_names):
+            logger.info(f"Параметры AmneziaVPN загружены из конфига: {params}")
+            return params
+        else:
+            missing = set(param_names) - set(params.keys())
+            logger.warning(f"Не найдены параметры AmneziaVPN: {missing}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Ошибка чтения параметров AmneziaVPN: {e}")
+        return None
 
 def get_server_public_key(vpn_config_dir: str) -> Optional[str]:
     """Получить публичный ключ сервера из конфига."""
