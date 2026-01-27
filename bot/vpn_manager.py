@@ -2,6 +2,7 @@
 import os
 import re
 import logging
+import subprocess
 from typing import Tuple, Optional, List, Dict
 from bot.utils import (
     get_external_ip,
@@ -127,23 +128,50 @@ def delete_client(
         if not os.path.exists(client_config_path):
             return False, f"Клиент `{client_name}` не найден"
         
-        # Читаем клиентский конфиг, чтобы получить публичный ключ
+        # Читаем клиентский конфиг, чтобы получить приватный ключ клиента
         with open(client_config_path, 'r') as f:
             client_config = f.read()
         
-        # Извлекаем публичный ключ клиента из секции [Peer]
-        peer_match = re.search(
-            r'\[Peer\].*?PublicKey\s*=\s*([^\s]+)',
+        # Извлекаем приватный ключ клиента из секции [Interface]
+        interface_match = re.search(
+            r'\[Interface\].*?PrivateKey\s*=\s*([^\s]+)',
             client_config,
             re.DOTALL
         )
         
-        if not peer_match:
-            # Если не нашли ключ в клиентском конфиге, удаляем только файл
-            os.remove(client_config_path)
-            return True, f"Файл конфига удален, но не удалось найти ключ для удаления из серверного конфига"
+        if not interface_match:
+            # Если не нашли приватный ключ, пробуем найти публичный ключ в [Peer] (старый формат)
+            peer_match = re.search(
+                r'\[Peer\].*?PublicKey\s*=\s*([^\s]+)',
+                client_config,
+                re.DOTALL
+            )
+            if not peer_match:
+                os.remove(client_config_path)
+                return True, f"Файл конфига удален, но не удалось найти ключ для удаления из серверного конфига"
+            client_public_key = peer_match.group(1).strip()
+        else:
+            # Генерируем публичный ключ из приватного
+            client_private_key = interface_match.group(1).strip()
+            try:
+                result = subprocess.run(
+                    ['wg', 'pubkey'],
+                    input=client_private_key,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode != 0:
+                    logger.error(f"Ошибка генерации публичного ключа: {result.stderr}")
+                    os.remove(client_config_path)
+                    return False, f"Ошибка генерации публичного ключа из приватного"
+                client_public_key = result.stdout.strip()
+            except Exception as e:
+                logger.error(f"Ошибка генерации публичного ключа: {e}")
+                os.remove(client_config_path)
+                return False, f"Ошибка генерации публичного ключа: {e}"
         
-        client_public_key = peer_match.group(1).strip()
+        logger.info(f"Ищем пир с публичным ключом клиента: {client_public_key[:20]}...")
         
         # Удаляем пира из серверного конфига
         if os.path.exists(server_config_path):
@@ -152,6 +180,7 @@ def delete_client(
             
             new_lines = []
             skip_current_peer = False
+            peer_found = False
             
             for line in lines:
                 stripped = line.strip()
@@ -166,7 +195,9 @@ def delete_client(
                     key_match = re.search(r'PublicKey\s*=\s*([^\s]+)', line)
                     if key_match:
                         found_key = key_match.group(1).strip()
+                        logger.debug(f"Найден ключ в серверном конфиге: {found_key[:20]}...")
                         if found_key == client_public_key:
+                            peer_found = True
                             # Это нужный пир - удаляем всю предыдущую секцию [Peer]
                             # Находим последний [Peer] в new_lines
                             last_peer_idx = None
@@ -179,6 +210,8 @@ def delete_client(
                                 # Удаляем все строки от [Peer] включительно
                                 new_lines = new_lines[:last_peer_idx]
                                 logger.info(f"Удалена секция [Peer] с ключом {client_public_key[:20]}...")
+                            else:
+                                logger.warning(f"Не найден [Peer] перед ключом {client_public_key[:20]}...")
                             
                             skip_current_peer = True
                             # Не добавляем эту строку и пропускаем остальные до следующей секции
@@ -204,7 +237,10 @@ def delete_client(
             with open(server_config_path, 'w') as f:
                 f.writelines(new_lines)
             
-            logger.info(f"Удален пир {client_name} из серверного конфига")
+            if peer_found:
+                logger.info(f"Удален пир {client_name} из серверного конфига")
+            else:
+                logger.warning(f"Пир с ключом {client_public_key[:20]}... не найден в серверном конфиге")
         
         # Удаляем файл конфига клиента
         os.remove(client_config_path)
