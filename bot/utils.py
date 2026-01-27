@@ -316,7 +316,7 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
             return False, "Контейнер не найден"
         
         # Выполняем wg-quick down и up для применения конфигурации
-        cmd = f"wg-quick down {config_path} && wg-quick up {config_path}"
+        cmd = f"wg-quick down /opt/amnezia/awg/wg0.conf && wg-quick up /opt/amnezia/awg/wg0.conf"
         result = subprocess.run(
             ['docker', 'exec', container_name, 'bash', '-c', cmd],
             capture_output=True,
