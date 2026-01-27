@@ -231,19 +231,28 @@ def get_client_config(client_name: str, vpn_config_dir: str) -> Optional[str]:
         config_path = os.path.join(vpn_config_dir, f"{client_name}.conf")
         
         if not os.path.exists(config_path):
+            logger.warning(f"Конфиг не найден: {config_path}")
             return None
         
         with open(config_path, 'r') as f:
             config_content = f.read()
         
+        if not config_content or not config_content.strip():
+            logger.error(f"Конфиг клиента {client_name} пустой или содержит только пробелы")
+            return None
+        
+        logger.debug(f"Прочитан конфиг клиента {client_name}, длина: {len(config_content)} символов")
+        
         # Добавляем параметры AmneziaVPN перед секцией [Peer]
         # Если параметры уже есть, не добавляем их повторно
         if 'Jc =' in config_content:
+            logger.debug(f"Параметры AmneziaVPN уже присутствуют в конфиге {client_name}")
             return config_content
         
         # Находим позицию перед [Peer]
         peer_pos = config_content.find('[Peer]')
         if peer_pos == -1:
+            logger.warning(f"Секция [Peer] не найдена в конфиге {client_name}")
             return config_content
         
         # Добавляем параметры AmneziaVPN перед [Peer]
@@ -261,6 +270,7 @@ H4 = {AMNEZIA_H4}
         
         # Вставляем параметры перед [Peer]
         config_with_params = config_content[:peer_pos] + amnezia_params + config_content[peer_pos:]
+        logger.debug(f"Добавлены параметры AmneziaVPN в конфиг {client_name}, итоговая длина: {len(config_with_params)} символов")
         return config_with_params
     
     except Exception as e:

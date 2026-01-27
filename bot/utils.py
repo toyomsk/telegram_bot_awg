@@ -185,6 +185,12 @@ def generate_keys() -> Tuple[Optional[str], Optional[str], Optional[str]]:
 def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
     """Генерация QR-кода для конфига."""
     try:
+        if not config_text or not config_text.strip():
+            logger.error("Передан пустой config_text для генерации QR-кода")
+            return None
+        
+        logger.debug(f"Генерация QR-кода для конфига длиной {len(config_text)} символов")
+        
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
         qr.add_data(config_text)
         qr.make(fit=True)
@@ -195,6 +201,7 @@ def generate_qr_code(config_text: str) -> Optional[io.BytesIO]:
         bio = io.BytesIO()
         img.save(bio, 'PNG')
         bio.seek(0)
+        bio.name = 'qr_code.png'  # Устанавливаем имя файла для Telegram API
         return bio
     except Exception as e:
         logger.error(f"Ошибка генерации QR-кода: {e}")
