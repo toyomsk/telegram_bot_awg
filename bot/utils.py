@@ -304,7 +304,7 @@ def _run_wg_in_container(cmd: list, container_name: Optional[str] = None) -> sub
         )
 
 def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
-    """Применить конфигурацию WireGuard без перезапуска (wg-quick strip + wg syncconf)."""
+    """Применить конфигурацию WireGuard через wg-quick down/up."""
     try:
         config_path = os.path.join(vpn_config_dir, "wg0.conf")
         if not os.path.exists(config_path):
@@ -315,17 +315,17 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
         if not container_name:
             return False, "Контейнер не найден"
         
-        # Используем process substitution для передачи результата wg-quick strip напрямую в wg syncconf
-        cmd = f"wg syncconf {WG_INTERFACE} <(wg-quick strip {config_path})"
+        # Выполняем wg-quick down и up для применения конфигурации
+        cmd = f"wg-quick down {config_path} && wg-quick up {config_path}"
         result = subprocess.run(
             ['docker', 'exec', container_name, 'bash', '-c', cmd],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=30
         )
         
         if result.returncode == 0:
-            logger.info(f"Конфигурация WireGuard применена через syncconf")
+            logger.info(f"Конфигурация WireGuard применена через wg-quick down/up")
             
             # Проверяем, что пиры действительно применены
             try:
@@ -339,18 +339,18 @@ def reload_wg_config(vpn_config_dir: str) -> Tuple[bool, str]:
             return True, "✅ Конфигурация применена"
         else:
             error_msg = result.stderr if result.stderr else result.stdout
-            logger.warning(f"Ошибка syncconf: {error_msg}")
-            return False, f"Ошибка syncconf: {error_msg}"
+            logger.warning(f"Ошибка wg-quick: {error_msg}")
+            return False, f"Ошибка wg-quick: {error_msg}"
             
     except FileNotFoundError:
-        logger.error("Команда wg не найдена")
-        return False, "wg команда недоступна"
+        logger.error("Команда wg-quick не найдена")
+        return False, "wg-quick команда недоступна"
     except Exception as e:
         logger.error(f"Ошибка применения конфигурации: {e}")
         return False, f"Ошибка: {e}"
 
 def restart_vpn(docker_compose_dir: str, vpn_config_dir: str = None) -> Tuple[bool, str]:
-    """Применить изменения конфигурации VPN через wg syncconf (без перезапуска)."""
+    """Применить изменения конфигурации VPN через wg-quick down/up."""
     if vpn_config_dir is None:
         vpn_config_dir = VPN_CONFIG_DIR
     
