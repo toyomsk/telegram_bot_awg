@@ -101,7 +101,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/docker/amnezia/telegram-bot-awg
-Environment=PATH=/opt/docker/amnezia/telegram-bot-awg/venv/bin
+Environment="PATH=/opt/docker/amnezia/telegram-bot-awg/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONPATH=/opt/docker/amnezia/telegram-bot-awg"
 EnvironmentFile=/opt/docker/amnezia/telegram-bot-awg/.env
 ExecStart=/opt/docker/amnezia/telegram-bot-awg/venv/bin/python -m bot.main

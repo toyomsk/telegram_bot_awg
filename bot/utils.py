@@ -254,17 +254,31 @@ def get_server_status(docker_compose_dir: str, vpn_config_dir: str) -> str:
         # WireGuard статус
         wg_info = "WireGuard интерфейс не активен"
         try:
-            result = subprocess.run(
-                ['wg', 'show'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
+            # Сначала пробуем проверить внутри Docker контейнера
+            container_name = _get_container_name()
+            if container_name:
+                result = _run_wg_in_container(['wg', 'show', WG_INTERFACE], container_name)
+            else:
+                # Если контейнер не найден, пробуем на хосте
+                result = subprocess.run(
+                    ['wg', 'show', WG_INTERFACE],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+            
             if result.returncode == 0 and result.stdout.strip():
                 wg_output = result.stdout.strip()
                 # Подсчет активных соединений
                 active_connections = len(re.findall(r'latest handshake:', wg_output))
-                wg_info = f"Активных подключений: {active_connections}"
+                # Подсчет общего количества пиров
+                peer_count = len(re.findall(r'peer:\s*([A-Za-z0-9+/=]{44})', wg_output))
+                if active_connections > 0:
+                    wg_info = f"Активных подключений: {active_connections} из {peer_count}"
+                elif peer_count > 0:
+                    wg_info = f"Пиров настроено: {peer_count} (нет активных подключений)"
+                else:
+                    wg_info = "Интерфейс активен, но пиры не настроены"
         except Exception as e:
             logger.error(f"Ошибка проверки статуса WireGuard: {e}")
         
