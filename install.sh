@@ -120,10 +120,10 @@ if [ -z "$ADMIN_IDS" ]; then
 fi
 
 # VPN_CONFIG_DIR
-ask_with_default "Введите VPN_CONFIG_DIR" "/opt/docker/amnezia/awg-config" VPN_CONFIG_DIR
+ask_with_default "Введите VPN_CONFIG_DIR" "/opt/docker/amnezia-wg/awg-config" VPN_CONFIG_DIR
 
 # DOCKER_COMPOSE_DIR
-ask_with_default "Введите DOCKER_COMPOSE_DIR" "/opt/docker/amnezia" DOCKER_COMPOSE_DIR
+ask_with_default "Введите DOCKER_COMPOSE_DIR" "/opt/docker/amnezia-wg" DOCKER_COMPOSE_DIR
 
 # VPN_CLIENT_START_IP
 ask_with_default "Введите VPN_CLIENT_START_IP" "2" VPN_CLIENT_START_IP
