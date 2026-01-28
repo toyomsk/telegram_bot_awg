@@ -220,7 +220,10 @@ Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
 Environment=PATH=$INSTALL_DIR/venv/bin
+EnvironmentFile=$INSTALL_DIR/.env
 ExecStart=$INSTALL_DIR/venv/bin/python $INSTALL_DIR/bot/main.py
+StandardOutput=journal
+StandardError=journal
 Restart=always
 RestartSec=10
 

@@ -5,8 +5,15 @@ import logging
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
+# Определяем путь к .env файлу относительно корня проекта
+env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+
 # Загружаем переменные окружения из .env файла
-load_dotenv()
+if os.path.exists(env_path):
+    load_dotenv(env_path)
+else:
+    # Пробуем загрузить из текущей директории
+    load_dotenv()
 
 logger = logging.getLogger(__name__)
 
