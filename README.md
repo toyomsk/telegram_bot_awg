@@ -75,11 +75,11 @@ source venv/bin/activate
 python3 -m bot.main
 ```
 
-Или сделайте файл исполняемым:
+Или запустите напрямую из корневой директории проекта:
 
 ```bash
-chmod +x bot/main.py
-./bot/main.py
+cd /opt/docker/amnezia/telegram-bot-awg
+venv/bin/python -m bot.main
 ```
 
 ## Автозапуск через systemd
@@ -102,7 +102,11 @@ Type=simple
 User=root
 WorkingDirectory=/opt/docker/amnezia/telegram-bot-awg
 Environment=PATH=/opt/docker/amnezia/telegram-bot-awg/venv/bin
-ExecStart=/opt/docker/amnezia/telegram-bot-awg/venv/bin/python /opt/docker/amnezia/telegram-bot-awg/bot/main.py
+Environment="PYTHONPATH=/opt/docker/amnezia/telegram-bot-awg"
+EnvironmentFile=/opt/docker/amnezia/telegram-bot-awg/.env
+ExecStart=/opt/docker/amnezia/telegram-bot-awg/venv/bin/python -m bot.main
+StandardOutput=journal
+StandardError=journal
 Restart=always
 RestartSec=10
 

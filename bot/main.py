@@ -4,6 +4,13 @@
 import sys
 import os
 import logging
+
+# Добавляем корневую директорию проекта в sys.path
+# Это нужно для того, чтобы Python мог найти модули config и bot
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 
 # Настройка логирования до импорта модулей
@@ -17,7 +24,7 @@ def main() -> None:
     """Запуск бота."""
     try:
         # Проверка наличия .env файла
-        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+        env_path = os.path.join(project_root, '.env')
         if not os.path.exists(env_path):
             logger.error(f"Файл .env не найден: {env_path}")
             logger.error("Создайте .env файл на основе .env.example")
